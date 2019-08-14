@@ -5,6 +5,7 @@ from preprocess import read_list
 # from env import *
 from env_mhlee import *
 
+
 class DataLoader():
 
     def __init__(self, batch_size):
@@ -12,11 +13,21 @@ class DataLoader():
         self.data_list = None
 
     def build(self):
+        """엑셀파일 읽고 배치의 수, 데이터의 수"""
         self.data_list = read_list()
         self.n = len(self.data_list)
         self.num_batches = int(np.ceil(self.n / (self.batch_size // 4)))
 
     def next_batch(self):
+        """Batch Generator
+
+        1. shuffle
+        2. 128 * 512 만큼 cropping
+
+        :return:
+        1. y_batch: (batch_size, 128*512)
+        2. att_batch: (batch_size, 3)
+        """
 
         np.random.shuffle(self.data_list)
 
@@ -55,6 +66,12 @@ class DataLoader():
         return y
 
     def _crop(self, y, length):
+        """크롭핑
+        음성이 Length보다 짧으면 0으로패딩
+        길면 랜덤한 위치 크롭핑
+
+        :return: ndarray, (length,)
+        """
         res = np.zeros((length,))
 
         n = len(y)
