@@ -82,3 +82,9 @@ class DataLoader():
             res = y[r: r + length]
 
         return res
+
+    def next_audio(self):
+        """audio Generator"""
+        for data in self.data_list:
+            file_name = data['file_name']
+            yield librosa.load(file_name)
