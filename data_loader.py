@@ -83,8 +83,14 @@ class DataLoader():
 
         return res
 
-    def next_audio(self):
-        """audio Generator"""
+    def next_audio(self, sr=False):
+        """audio Generator
+
+        :return: x, sr
+        """
         for data in self.data_list:
-            file_name = data['file_name']
-            yield librosa.load(file_name)
+            file_name = data['fileName']
+            if sr:
+                yield librosa.load(file_name)
+            else:
+                yield self._crop(librosa.load(file_name)[0], length=128*512).reshape([-1, 1])
