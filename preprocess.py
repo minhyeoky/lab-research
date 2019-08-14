@@ -4,7 +4,7 @@ import pathlib
 import os
 
 from functools import partial
-from env import INFO_FILE_PATH
+from env_mhlee import *
 
 
 def read_list():
@@ -13,7 +13,14 @@ def read_list():
     info_file = pd.read_excel(INFO_FILE_PATH, sheet_name="Sheet1")
 
     def append_to_file_list(row, file_list):
-        file_name = f"./data/{int(row['fileName'])}_{int(row['suffix'])}.wav"
+        """row 읽어서 file_list 에 넣음,
+
+        :param row: 엑셀
+        :param file_list:
+        :return: None
+        """
+        file_name = f"{DATA_PATH}/{int(row['fileName'])}_{int(row['suffix'])}.wav"
+        # ./data -> DATAPATH
         text = row["text"]
         sex = row["sex"]
         langNat = row["langNat"]
