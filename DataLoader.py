@@ -10,11 +10,16 @@ class DataLoader():
     def __init__(self, batch_size):
         self.batch_size = batch_size
         self.data_list = None
+        self.num_batches = None
 
+    def __len__(self):
+        return self.num_batches
 
     def build(self):
         self.data_list = read_list()
         self.n = len(self.data_list)
+        print("Data size: {}".format(self.n))
+        
         self.num_batches = int(np.ceil(self.n / (self.batch_size//4)))
 
     def next_batch(self):
@@ -25,7 +30,7 @@ class DataLoader():
             start = b * (self.batch_size//4)
             end = min(self.n, (b+1)*(self.batch_size//4))
 
-            y_batch = np.zeros(((end - start)*4, 128*512))
+            y_batch = np.zeros(((end - start)*4, 128*512, 1))
             att_batch = np.zeros(((end - start)*4, NUM_ATT))
 
             for i in range(start, end):
@@ -44,7 +49,7 @@ class DataLoader():
                 for j in range(4):
                     y_cropped = self._crop(y, 128*512)
 
-                    y_batch[(i - start)*4 + j] = y_cropped
+                    y_batch[(i - start)*4 + j, :, 0] = y_cropped
                     att_batch[(i - start)*4 + j] = attributes
 
             yield y_batch, att_batch
@@ -52,6 +57,8 @@ class DataLoader():
     def _read_one_file(self, path):
         y, sr = librosa.load(path)
         # y = librosa.resample(y, sr, 4410)
+        
+#         y = np.fft.fft(y)
 
         return y
 

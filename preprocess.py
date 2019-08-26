@@ -14,6 +14,9 @@ def read_list():
 
     def append_to_file_list(row, file_list):
         file_name = f"./data/{int(row['fileName'])}_{int(row['suffix'])}.wav"
+        if os.path.exists(file_name) is False:
+            return None
+        
         text = row["text"]
         sex = row["sex"]
         langNat = row["langNat"]

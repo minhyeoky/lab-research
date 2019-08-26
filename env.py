@@ -3,6 +3,10 @@ INFO_FILE_PATH = "./data/koreancorpus.xlsx"
 
 NUM_ATT = 3
 
+ATT = {
+    "sex", "langNat", "levKor"
+}
+
 SEX_ONE_HOT = {
     "M": 0,
     "F": 1
@@ -23,3 +27,7 @@ langNat_ONE_HOT = {
 }
 
 BATCH_SIZE = 64
+EPOCHS = 30
+ETA = 1e-2
+
+GPU_INDEX = [0, 1]
