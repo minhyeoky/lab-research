@@ -1,0 +1,11 @@
+{
+  "hop_length": 128,
+  "n_fft": 512,
+  "window": "hann",
+  "data_lab_xlsx": "../data/soundAttGAN/koreancorpus.xlsx",
+  "data_hub": "../data/KsponSpeech_01",
+  "data_lab": "../data/soundAttGAN",
+  "n_mels": 128,
+  "sr_hub": 16000,
+  "sr_lab": 22050
+}

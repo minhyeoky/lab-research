@@ -1,96 +1,204 @@
+import json
+import random
+from functools import partial
+from pathlib import Path
+from pprint import pformat
+import pandas as pd
 import numpy as np
 import librosa
+import librosa.display
+from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
 
-from preprocess import read_list
 # from env import *
-from env_mhlee import *
+
+import logging
+
+logger = logging.getLogger()
+logger.setLevel("DEBUG")
+
+
+def load_config(file):
+    with open(file) as f:
+        data = json.load(f)
+    return data
+
+
+def read_list(file_path='../data/soundAttGAN/koreancorpus.xlsx', data_path='../data/soundAttGAN', hub=None):
+    file_list = []
+
+    if hub:
+        logging.info(f'reading hub data from {hub}')
+        p = Path(hub)
+        for each in p.iterdir():
+            for wav in each.glob('*.wav'):
+                file_list.append({
+                    "fileName": str(wav)
+                })
+
+
+    else:
+        logging.info(f'reading lab data from {data_path} & {file_path}')
+
+        info_file = pd.read_excel(file_path, sheet_name="Sheet1")
+
+        def _append_to_file_list(row, file_list):
+            """data_path 읽어서 file_list 에 넣음,
+
+            :param row: 엑셀
+            :param file_list:
+            :return: None
+            """
+            file_name = f"{data_path}/{int(row['fileName'])}_{int(row['suffix'])}.wav"
+
+            text = row["text"]
+
+            file_list.append({
+                "fileName": file_name,
+                "text": text
+            })
+
+        info_file.apply(partial(_append_to_file_list, file_list=file_list), axis=1)
+
+    return file_list
 
 
 class DataLoader():
 
-    def __init__(self, batch_size):
-        self.batch_size = batch_size
-        self.data_list = None
+    def __init__(self, config='./config.json'):
+        logging.info(f'DataLoader initializing')
+        logging.info(f'configuration setting from {config}')
+        self.config = load_config(config)
+        logging.info(pformat(self.config))
+
+        self.data_lab = None
+        self.data_hub = None
+
+        self.sr = self.config['sr_hub']
+        self.hop_length = self.config['hop_length']
+        self.n_fft = self.config['n_fft']
+
+        self.build()
+
+    #         logging.info(f'frame rate: {}')
 
     def build(self):
-        """엑셀파일 읽고 배치의 수, 데이터의 수"""
-        self.data_list = read_list()
-        self.n = len(self.data_list)
-        self.num_batches = int(np.ceil(self.n / (self.batch_size // 4)))
+        self.data_lab = read_list()
+        self.data_hub = read_list(hub=self.config['data_hub'])
 
-    def next_batch(self):
-        """Batch Generator
-
-        1. shuffle
-        2. 128 * 512 만큼 cropping
-
-        :return:
-        1. y_batch: (batch_size, 128*512)
-        2. att_batch: (batch_size, 3)
-        """
-
-        np.random.shuffle(self.data_list)
-
-        for b in range(self.num_batches):
-            start = b * (self.batch_size // 4)
-            end = min(self.n, (b + 1) * (self.batch_size // 4))
-
-            y_batch = np.zeros(((end - start) * 4, 128 * 512))
-            att_batch = np.zeros(((end - start) * 4, NUM_ATT))
-
-            for i in range(start, end):
-                data = self.data_list[i]
-                file_name = data["fileName"]
-                attributes = [
-                    SEX_ONE_HOT[data["sex"]],
-                    langNat_ONE_HOT[data["langNat"]],
-                    levKor_ONE_HOT[data["levKor"]]
-                ]
-
-                y = self._read_one_file(file_name)
-
-                # print(len(y))
-
-                for j in range(4):
-                    y_cropped = self._crop(y, 128 * 512)
-
-                    y_batch[(i - start) * 4 + j] = y_cropped
-                    att_batch[(i - start) * 4 + j] = attributes
-
-            yield y_batch, att_batch
-
-    def _read_one_file(self, path):
-        y, sr = librosa.load(path)
-        # y = librosa.resample(y, sr, 4410)
-
-        return y
-
-    def _crop(self, y, length):
-        """크롭핑
-        음성이 Length보다 짧으면 0으로패딩
-        길면 랜덤한 위치 크롭핑
-
-        :return: ndarray, (length,)
-        """
-        res = np.zeros((length,))
-
-        n = len(y)
-        if n <= length:
-            res[:len(y)] = y
-        else:
-            r = np.random.randint(0, n - length)
-            res = y[r: r + length]
-
-        return res
-
-    def next_audio(self, sr=False):
+    def train_generator(self, data, norm=True):
         """audio Generator
 
-        :return: x, sr
+        :return: y, sr
         """
-        for data in self.data_list:
-            file_name = data['fileName']
-            if sr:
-                yield librosa.load(file_name)
-            else:
-                yield self._crop(librosa.load(file_name)[0], length=128*512).reshape([-1, 1])
+        if data == 'lab':
+            files = self.data_lab
+            raise NotImplementedError
+        elif data == 'hub':
+            print("@@")
+            files = self.data_hub
+        else:
+            raise TypeError
+
+        for each in files:
+            file_name = each['fileName']
+            _y, _sr = librosa.load(file_name, sr=self.sr)
+
+            if norm:
+                div = max(_y.max(), abs(_y.min()))
+                _y = _y * (1. / div)
+
+            _y = self._melspectrogram(_y)
+
+            #             if stft:
+            #                 # D:np.ndarray [shape=(1 + n_fft/2, t), dtype=dtype]
+            #                 _y = self.stft(_y)
+            #                 _y = np.expand_dims(_y, axis=-1)
+
+            yield _y
+
+    #     def stft(self, y, db=False, abs=False):
+    #         """short time fourier transform"""
+
+    #         # [shape=(1 + n_fft/2, t), dtype=dtype]
+    #         y = librosa.stft(y=y,
+    #                          n_fft=self.config['n_fft'],
+    #                          window=self.config['window'],
+    #                          hop_length=self.config['hop_length'],
+    #                         dtype=np.float32)
+    #         print(y)
+    #         if abs:
+    #             y = np.abs(y)
+
+    #         if db:
+    #             y = librosa.amplitude_to_db(y, ref=np.max)
+
+    #         return y
+
+    def _melspectrogram(self, y):
+        """Compute a mel-scaled spectrogram"""
+        # [shape=(n_mels, t)]
+        return librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.config['n_mels'], n_fft=self.config['n_fft'],
+                                              S=None, hop_length=self.config['hop_length'], win_length=None,
+                                              window=self.config['window'], center=True, pad_mode='reflect', power=2.0)
+
+    def _mel_to_audio(self, mel):
+        return librosa.feature.inverse.mel_to_audio(mel, sr=self.config['sr_hub'], n_fft=self.config['n_fft'],
+                                                    hop_length=self.config['hop_length'])
+
+    #     def istft(self, stft_matrix):
+    #         return librosa.istft(stft_matrix=stft_matrix, hop_length=self.config['hop_length'])
+
+    def _power_to_db(self, s):
+        return librosa.power_to_db(s, ref=np.max)
+
+    def specshow(self, y, mel=True):
+        """plot spectrogram
+
+        :param y:
+        :return: axis
+        """
+        if mel:
+            y = self._power_to_db(y)
+            librosa.display.specshow(y, y_axis='mel', x_axis='time')
+            plt.title('Mel spectrogram')
+        else:
+            #             y = librosa.amplitude_to_db(y, ref=np.max)
+            raise NotImplementedError
+            librosa.display.specshow(y, hop_length=self.config['hop_length'],
+                                     y_axis='log', x_axis='time')
+            plt.title('Power spectrogram')
+
+        plt.colorbar(format='%+2.0f dB')
+        plt.tight_layout()
+        plt.show()
+
+    def random_audio(self, path=None, mel_to_audio=False, specshow=True):
+
+        if path:
+            raise NotImplementedError
+            y, sr = librosa.load(path)
+
+        else:
+            y, sr = librosa.load(random.choice(self.data_hub)['fileName'], sr=self.config['sr_hub'])
+
+        if mel_to_audio:
+            y = self._melspectrogram(y)
+            self.specshow(y, mel=True)
+            y = self._mel_to_audio(y)
+        else:
+            #             self.specshow(y, mel=False)
+            pass
+
+        return y, sr
+
+    def test_train_generator(self):
+        """
+
+        :return: audio
+        """
+        it = iter(self.train_generator(data='hub'))
+        r_number = random.randint(0, 100)
+        for _ in range(r_number):
+            _y = next(it)
+        return self._mel_to_audio(_y)
