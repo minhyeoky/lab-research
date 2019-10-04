@@ -1,8 +1,0 @@
-{
-  "batch_size": 32,
-  "y_length": 65536,
-  "kernel_input": 128,
-  "filter_input": 4,
-  "strides_input": 1,
-  "kernel_output": 128
-}
