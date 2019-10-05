@@ -65,7 +65,7 @@ def read_list(file_path='../data/soundAttGAN/koreancorpus.xlsx', data_path='../d
 
 class DataLoader():
 
-    def __init__(self, config='./config.json'):
+    def __init__(self, config='./config.json', n_max=None):
         logging.info(f'DataLoader initializing')
         logging.info(f'configuration setting from {config}')
         self.config = load_config(config)
@@ -77,10 +77,18 @@ class DataLoader():
         self.sr = self.config['sr_hub']
         self.hop_length = self.config['hop_length']
         self.n_fft = self.config['n_fft']
+        self.n_mels = self.config['n_mels']
+        self.n_cnns = self.config['n_cnns']
+
+        self.n_max = n_max
 
         self.build()
 
     #         logging.info(f'frame rate: {}')
+
+    @property
+    def mel_shape(self):
+        return self.n_mels, self.n_cnns * self.n_mels
 
     def build(self):
         self.data_lab = read_list()
@@ -95,10 +103,11 @@ class DataLoader():
             files = self.data_lab
             raise NotImplementedError
         elif data == 'hub':
-            print("@@")
             files = self.data_hub
         else:
             raise TypeError
+
+        _n_iter = 0
 
         for each in files:
             file_name = each['fileName']
@@ -110,12 +119,38 @@ class DataLoader():
 
             _y = self._melspectrogram(_y)
 
+            if self.n_cnns == 1 and _y.shape[1] > 128:
+                logging.debug(f'self.n_cnns == 1 and _y.shape[1] > 128:{file_name}')
+                continue
+
+            elif _y.shape[1] < 128 or _y.shape[1] > self.n_mels * self.n_cnns:
+                logging.debug(f'_y.shape[1] < 128 or _y.shape[1] > self.n_mels * self.n_cnns:{file_name}')
+                continue
+
+            _y = self._extend_timestep(_y)
+
             #             if stft:
             #                 # D:np.ndarray [shape=(1 + n_fft/2, t), dtype=dtype]
             #                 _y = self.stft(_y)
             #                 _y = np.expand_dims(_y, axis=-1)
 
+
+            if self.n_max is not None:
+                if _n_iter == self.n_max:
+                    break
+            _n_iter += 1
+
             yield _y
+
+    def _extend_timestep(self, y):
+        place = np.zeros(shape=[self.n_mels, self.n_mels * self.n_cnns])
+        length = y.shape[1]
+        n_fit = length // self.n_mels
+
+        for i in range(n_fit):
+            place[:, i * self.n_mels:(i + 1) * self.n_mels] = y[:, i * self.n_mels:(i + 1) * self.n_mels]
+        place[:, n_fit * self.n_mels:length] = y[:, n_fit * self.n_mels:length]
+        return place
 
     #     def stft(self, y, db=False, abs=False):
     #         """short time fourier transform"""
@@ -138,7 +173,7 @@ class DataLoader():
     def _melspectrogram(self, y):
         """Compute a mel-scaled spectrogram"""
         # [shape=(n_mels, t)]
-        return librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.config['n_mels'], n_fft=self.config['n_fft'],
+        return librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.config['n_mels'], n_fft=self.config['n_fft'],
                                               S=None, hop_length=self.config['hop_length'], win_length=None,
                                               window=self.config['window'], center=True, pad_mode='reflect', power=2.0)
 
@@ -202,3 +237,7 @@ class DataLoader():
         for _ in range(r_number):
             _y = next(it)
         return self._mel_to_audio(_y)
+
+
+if __name__ == "__main__":
+    dl = DataLoader()
