@@ -74,27 +74,63 @@ class DataLoader():
         self.data_lab = None
         self.data_hub = None
 
-        self.sr = self.config['sr_hub']
-        self.hop_length = self.config['hop_length']
-        self.n_fft = self.config['n_fft']
-        self.n_mels = self.config['n_mels']
-        self.n_cnns = self.config['n_cnns']
-
         self.n_max = n_max
+        self.n_fft = None
+        self.hop_length = None
+        self.window = None
+        self.n_mels = None
+        self.sr_hub = None
+        self.sr_lab = None
+        self.fmax = None
+        self.n_mels = None
+        self.max_sec = None
+        self.win_length = None
+        self.top_db = None
+
+        self.__dict__ = {**self.__dict__,
+                         **self.config}
+
+        self.sr = self.sr_hub
 
         self.build()
 
-    #         logging.info(f'frame rate: {}')
+    # @property
+    # def mel_shape(self):
+    #     return self.n_mels, self.n_cnns * self.n_mels
 
     @property
-    def mel_shape(self):
-        return self.n_mels, self.n_cnns * self.n_mels
+    def stft_shape(self):
+        return (self.n_fft / 2) + 1, self.sr * self.max_sec / self.hop_length
 
     def build(self):
         self.data_lab = read_list()
         self.data_hub = read_list(hub=self.config['data_hub'])
 
-    def train_generator(self, data, norm=True):
+    def _check_sec(self, y):
+        sec = y.shape[0] / self.sr
+        if sec > self.max_sec:
+            return False
+        else:
+            return True
+
+    def _norm(self, y):
+        div = max(y.max(), abs(y.min()))
+        y = y * (1. / div)
+        return y
+
+    def _norm_stft(self, y):
+        raise NotImplementedError
+        _y = self._norm(y)
+        _y = librosa.amplitude_to_db(_y, ref=np.max, top_db=self.top_db)
+        _y = (_y + self.top_db / 2.0) / (self.top_db / 2.0)
+        return _y
+
+    def _denorm_stft(self, y):
+        _y = y * (self.top_db / 2.0) - self.top_db / 2.0
+        _y = librosa.db_to_amplitude(_y)
+        return _y
+
+    def train_generator(self, data, norm=True, mel_spectrogram=False):
         """audio Generator
 
         :return: y, sr
@@ -108,32 +144,30 @@ class DataLoader():
             raise TypeError
 
         _n_iter = 0
+        _mel_filter = librosa.filters.mel(sr=self.sr, n_fft=self.n_fft, n_mels=self.n_mels,
+                                          fmax=self.fmax)
 
         for each in files:
             file_name = each['fileName']
             _y, _sr = librosa.load(file_name, sr=self.sr)
 
+            if not self._check_sec(_y):
+                continue
+
+            _y = self._pad_audio(_y)
+
             if norm:
-                div = max(_y.max(), abs(_y.min()))
-                _y = _y * (1. / div)
+                _y = self._norm(_y)
 
-            _y = self._melspectrogram(_y)
+            _y = librosa.stft(_y, n_fft=self.n_fft, hop_length=self.hop_length, window=self.config['window'],
+                              win_length=self.win_length)
+            _y = np.abs(_y)
+            # _y = self._norm_stft(_y)
+            # _y = self._norm(_y)
 
-            if self.n_cnns == 1 and _y.shape[1] > 128:
-                logging.debug(f'self.n_cnns == 1 and _y.shape[1] > 128:{file_name}')
-                continue
-
-            elif _y.shape[1] < 128 or _y.shape[1] > self.n_mels * self.n_cnns:
-                logging.debug(f'_y.shape[1] < 128 or _y.shape[1] > self.n_mels * self.n_cnns:{file_name}')
-                continue
-
-            _y = self._extend_timestep(_y)
-
-            #             if stft:
-            #                 # D:np.ndarray [shape=(1 + n_fft/2, t), dtype=dtype]
-            #                 _y = self.stft(_y)
-            #                 _y = np.expand_dims(_y, axis=-1)
-
+            if mel_spectrogram:
+                raise NotImplementedError
+                _y = np.dot(_mel_filter, _y)
 
             if self.n_max is not None:
                 if _n_iter == self.n_max:
@@ -142,36 +176,19 @@ class DataLoader():
 
             yield _y
 
-    def _extend_timestep(self, y):
-        place = np.zeros(shape=[self.n_mels, self.n_mels * self.n_cnns])
-        length = y.shape[1]
-        n_fit = length // self.n_mels
-
-        for i in range(n_fit):
-            place[:, i * self.n_mels:(i + 1) * self.n_mels] = y[:, i * self.n_mels:(i + 1) * self.n_mels]
-        place[:, n_fit * self.n_mels:length] = y[:, n_fit * self.n_mels:length]
-        return place
-
-    #     def stft(self, y, db=False, abs=False):
-    #         """short time fourier transform"""
-
-    #         # [shape=(1 + n_fft/2, t), dtype=dtype]
-    #         y = librosa.stft(y=y,
-    #                          n_fft=self.config['n_fft'],
-    #                          window=self.config['window'],
-    #                          hop_length=self.config['hop_length'],
-    #                         dtype=np.float32)
-    #         print(y)
-    #         if abs:
-    #             y = np.abs(y)
-
-    #         if db:
-    #             y = librosa.amplitude_to_db(y, ref=np.max)
-
-    #         return y
+    def _pad_audio(self, y):
+        _y = np.zeros(shape=[self.sr * self.max_sec - 1])
+        # **-1** - stft time axis shape 조절
+        _y[0:y.shape[0]] = y
+        return _y
 
     def _melspectrogram(self, y):
-        """Compute a mel-scaled spectrogram"""
+        """Compute a mel-scaled spectrogram
+
+        1. stft
+        2. absolute
+        3. amplitude to decibel
+        """
         # [shape=(n_mels, t)]
         return librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.config['n_mels'], n_fft=self.config['n_fft'],
                                               S=None, hop_length=self.config['hop_length'], win_length=None,
@@ -187,22 +204,24 @@ class DataLoader():
     def _power_to_db(self, s):
         return librosa.power_to_db(s, ref=np.max)
 
-    def specshow(self, y, mel=True):
+    def specshow(self, y, mel=False):
         """plot spectrogram
 
         :param y:
         :return: axis
         """
         if mel:
-            y = self._power_to_db(y)
+            y = self._power_to_db(y, ref=np.max)
             librosa.display.specshow(y, y_axis='mel', x_axis='time')
             plt.title('Mel spectrogram')
         else:
-            #             y = librosa.amplitude_to_db(y, ref=np.max)
-            raise NotImplementedError
+            y = librosa.amplitude_to_db(y, ref=np.max)
             librosa.display.specshow(y, hop_length=self.config['hop_length'],
-                                     y_axis='log', x_axis='time')
-            plt.title('Power spectrogram')
+                                     fmax=self.fmax,
+                                     sr=self.sr,
+                                     y_axis='linear',
+                                     x_axis='time')
+            plt.title('Magnitude spectrogram')
 
         plt.colorbar(format='%+2.0f dB')
         plt.tight_layout()
