@@ -53,7 +53,7 @@ dl: DataLoader = DataLoader(config=args.config, data=args.data_dir, n_max=n_max)
 dataset_train = tf.data.Dataset.from_generator(partial(dl.train_generator, data='hub'),
                                                output_types=tf.float32,
                                                output_shapes=dl.stft_shape)
-dataset_train = dataset_train.cache().batch(batch_size)
+dataset_train = dataset_train.shuffle(buffer_size=batch_size * 10).batch(batch_size)
 
 # Train setup
 
