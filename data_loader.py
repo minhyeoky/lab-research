@@ -109,7 +109,7 @@ class DataLoader():
 
     def _check_sec(self, y):
         sec = y.shape[0] / self.sr
-        if sec > self.max_sec:
+        if sec >= self.max_sec:
             return False
         else:
             return True
