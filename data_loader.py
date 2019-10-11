@@ -7,10 +7,8 @@ import pandas as pd
 import numpy as np
 import librosa
 import librosa.display
-from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
-
-# from env import *
+import os
 
 import logging
 
@@ -24,10 +22,14 @@ def load_config(file):
     return data
 
 
-def read_list(file_path='../data/soundAttGAN/koreancorpus.xlsx', data_path='../data/soundAttGAN', hub=None):
+def read_list(data='../data', hub=None):
     file_list = []
 
+    file_path = os.path.join(data, 'soundAttGAN/koreancorpus.xlsx')
+    data_path = os.path.join(data, 'soundAttGAN')
+
     if hub:
+        hub = os.path.join(data, 'KsponSpeech_01')
         logging.info(f'reading hub data from {hub}')
         p = Path(hub)
         for each in p.iterdir():
@@ -65,12 +67,11 @@ def read_list(file_path='../data/soundAttGAN/koreancorpus.xlsx', data_path='../d
 
 class DataLoader():
 
-    def __init__(self, config='./config.json', n_max=None):
+    def __init__(self, config, data, n_max):
         logging.info(f'DataLoader initializing')
-        logging.info(f'configuration setting from {config}')
         self.config = load_config(config)
-        logging.info(pformat(self.config))
 
+        self.data = data
         self.data_lab = None
         self.data_hub = None
 
@@ -103,8 +104,8 @@ class DataLoader():
         return (self.n_fft / 2) + 1, self.sr * self.max_sec / self.hop_length
 
     def build(self):
-        self.data_lab = read_list()
-        self.data_hub = read_list(hub=self.config['data_hub'])
+        self.data_lab = read_list(data=self.data)
+        self.data_hub = read_list(data=self.data, hub=True)
 
     def _check_sec(self, y):
         sec = y.shape[0] / self.sr
@@ -204,19 +205,20 @@ class DataLoader():
     def _power_to_db(self, s):
         return librosa.power_to_db(s, ref=np.max)
 
-    def specshow(self, y, mel=False):
+    def specshow(self, y, mel=False, return_figure=False):
         """plot spectrogram
 
         :param y:
         :return: axis
         """
+        fig = plt.figure()
         if mel:
             y = self._power_to_db(y, ref=np.max)
-            librosa.display.specshow(y, y_axis='mel', x_axis='time')
+            axes = librosa.display.specshow(y, y_axis='mel', x_axis='time')
             plt.title('Mel spectrogram')
         else:
             y = librosa.amplitude_to_db(y, ref=np.max)
-            librosa.display.specshow(y, hop_length=self.config['hop_length'],
+            axes = librosa.display.specshow(y, hop_length=self.config['hop_length'],
                                      fmax=self.fmax,
                                      sr=self.sr,
                                      y_axis='linear',
@@ -225,6 +227,8 @@ class DataLoader():
 
         plt.colorbar(format='%+2.0f dB')
         plt.tight_layout()
+        if return_figure:
+            return fig
         plt.show()
 
     def random_audio(self, path=None, mel_to_audio=False, specshow=True):
