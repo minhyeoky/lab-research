@@ -9,6 +9,8 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import os
+from keras_bert import Tokenizer
+from utils import *
 
 import logging
 
@@ -33,9 +35,16 @@ def read_list(data='../data', hub=None):
         logging.info(f'reading hub data from {hub}')
         p = Path(hub)
         for each in p.iterdir():
+            logging.debug(each)
             for wav in each.glob('*.wav'):
+                try:
+                    with open(str(wav).replace('.pcm.wav', '') + '.txt.prep', mode='r', encoding='utf8') as f:
+                        txt = f.readline().strip('\n')
+                except FileNotFoundError:
+                    continue
                 file_list.append({
-                    "fileName": str(wav)
+                    "fileName": str(wav),
+                    "text": txt
                 })
 
     else:
@@ -61,6 +70,10 @@ def read_list(data='../data', hub=None):
 
         info_file.apply(partial(_append_to_file_list, file_list=file_list), axis=1)
 
+    assert len(file_list) != 0
+
+    logging.info(f'total number of data: {len(file_list)}')
+
     return file_list
 
 
@@ -74,6 +87,7 @@ class DataLoader:
         self.data_lab = None
         self.data_hub = None
 
+        # configuration json
         self.n_max = n_max
         self.n_fft = None
         self.hop_length = None
@@ -85,12 +99,15 @@ class DataLoader:
         self.n_mels = None
         self.max_sec = None
         self.win_length = None
-        self.top_db = None
+        self.top_db = None  # 진폭/ 파워 데시벨 변환시 최대 데시벨
+        self.vocab = None  # 텍스트 임베딩 사전
+        self.max_len = None  # 텍스트 토크나이즈시 최대 토큰의 길이
 
         self.__dict__ = {**self.__dict__,
                          **self.config}
 
         self.sr = self.sr_hub
+        self.tokenizer = None
 
         self.build()
 
@@ -105,6 +122,22 @@ class DataLoader:
     def build(self):
         self.data_lab = read_list(data=self.data)
         self.data_hub = read_list(data=self.data, hub=True)
+
+        vocab_path = os.path.join(self.data, 'bert_model', 'vocab.txt')
+        logging.info(f'Reading vocab from {vocab_path}')
+        self.vocab = load_vocab(vocab_path)
+        logging.info(f'The number of vocab is {len(self.vocab)}')
+        self.tokenizer = Tokenizer(self.vocab, cased=True)
+
+        logging.info('Build done')
+        logging.info(pformat(self.config))
+        self._validate_build()
+
+    def _validate_build(self):
+        for key, value in self.__dict__.items():
+            if value is None:
+                raise ValueError(f'{key} is None')
+        return True
 
     def _check_sec(self, y):
         sec = y.shape[0] / self.sr
@@ -130,7 +163,7 @@ class DataLoader:
         _y = librosa.db_to_amplitude(_y)
         return _y
 
-    def train_generator(self, data, norm=True, mel_spectrogram=False):
+    def train_generator(self, data, norm=True, mel_spectrogram=False, return_text=False):
         """audio Generator
 
         :return: y, sr
@@ -149,6 +182,12 @@ class DataLoader:
 
         for each in files:
             file_name = each['fileName']
+            text = each['text']
+            if return_text:
+                text = self.tokenizer.encode(text, second=None, max_len=self.max_len)[0]
+                yield text
+                continue
+
             _y, _sr = librosa.load(file_name, sr=self.sr)
 
             if not self._check_sec(_y):
@@ -259,8 +298,6 @@ class DataLoader:
         for _ in range(r_number):
             _y = next(it)
         return self._mel_to_audio(_y)
-
-
 
 
 if __name__ == "__main__":

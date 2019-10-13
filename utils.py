@@ -8,6 +8,15 @@ def load_config(file):
     return data
 
 
+def load_vocab(path):
+    vocab = {}
+    with open(path, mode='r', encoding='utf8') as f:
+        for idx, line in enumerate(f):
+            line = line.strip('\n')
+            vocab[line] = idx
+    return vocab
+
+
 def _prep_txt(txt):
     """
     (철자전사)/(발음전사)로 표기된 경우 발음전사 사용
