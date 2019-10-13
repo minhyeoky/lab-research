@@ -38,7 +38,6 @@ def read_list(data='../data', hub=None):
                     "fileName": str(wav)
                 })
 
-
     else:
         logging.info(f'reading lab data from {data_path} & {file_path}')
 
@@ -65,7 +64,7 @@ def read_list(data='../data', hub=None):
     return file_list
 
 
-class DataLoader():
+class DataLoader:
 
     def __init__(self, config, data, n_max):
         logging.info(f'DataLoader initializing')
@@ -219,10 +218,10 @@ class DataLoader():
         else:
             y = librosa.amplitude_to_db(y, ref=np.max)
             axes = librosa.display.specshow(y, hop_length=self.config['hop_length'],
-                                     fmax=self.fmax,
-                                     sr=self.sr,
-                                     y_axis='linear',
-                                     x_axis='time')
+                                            fmax=self.fmax,
+                                            sr=self.sr,
+                                            y_axis='linear',
+                                            x_axis='time')
             plt.title('Magnitude spectrogram')
 
         plt.colorbar(format='%+2.0f dB')
@@ -260,6 +259,8 @@ class DataLoader():
         for _ in range(r_number):
             _y = next(it)
         return self._mel_to_audio(_y)
+
+
 
 
 if __name__ == "__main__":
