@@ -200,7 +200,7 @@ for epoch in range(epochs):
             # tf.saved_model.save(gen, ckpt_dir=ckpt_dir)
             save_path = manager.save()
             print(f'Saved checkpoint for step {ckpt.step.numpy()}: {save_path}')
-            print(f'Loss {loss.numpy()[0] + loss.numpy()[1]}')
+            print(f'Loss {loss[0].numpy() + loss[1].numpy()}')
         ckpt.step.assign_add(1)
 
     end = time()
