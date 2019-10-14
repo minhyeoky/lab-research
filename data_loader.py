@@ -24,7 +24,7 @@ def load_config(file):
     return data
 
 
-def read_list(data='../data', hub=None):
+def read_list(data='../data', hub=None, test=False):
     file_list = []
 
     file_path = os.path.join(data, 'soundAttGAN/koreancorpus.xlsx')
@@ -42,10 +42,14 @@ def read_list(data='../data', hub=None):
                         txt = f.readline().strip('\n')
                 except FileNotFoundError:
                     continue
+                if txt == '':
+                    continue
                 file_list.append({
                     "fileName": str(wav),
                     "text": txt
                 })
+            if test:
+                break
 
     else:
         logging.info(f'reading lab data from {data_path} & {file_path}')
@@ -79,11 +83,12 @@ def read_list(data='../data', hub=None):
 
 class DataLoader:
 
-    def __init__(self, config, data, n_max):
+    def __init__(self, config, data, n_max, test=False):
         logging.info(f'DataLoader initializing')
         self.config = load_config(config)
 
         self.data = data
+        self.test = test
         self.data_lab = None
         self.data_hub = None
 
@@ -121,7 +126,7 @@ class DataLoader:
 
     def build(self):
         self.data_lab = read_list(data=self.data)
-        self.data_hub = read_list(data=self.data, hub=True)
+        self.data_hub = read_list(data=self.data, hub=True, test=True)
 
         vocab_path = os.path.join(self.data, 'bert_model', 'vocab.txt')
         logging.info(f'Reading vocab from {vocab_path}')
