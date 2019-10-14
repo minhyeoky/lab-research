@@ -9,7 +9,7 @@ DConv = keras.layers.Conv2DTranspose
 Dense = keras.layers.Dense
 
 
-def _get_embedding_table():
+def _get_embedding_table(checkpoint_file):
     ckpt_loader = tf.train.load_checkpoint(checkpoint_file)
     #     model = keras_bert.load_trained_model_from_checkpoint(config_file=config_file,
     #                                                          checkpoint_file=checkpoint_file,
@@ -25,7 +25,7 @@ def _get_embedding_table():
 
 
 class AutoEncoder(keras.models.Model):
-    def __init__(self, config, input_shape, **kwargs):
+    def __init__(self, config, checkpoint_file, input_shape, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.config = load_config(config)
         self.audio_shape = input_shape
@@ -33,7 +33,7 @@ class AutoEncoder(keras.models.Model):
         self.act_fn = keras.layers.LeakyReLU()
         self.kernel_size = self.config['kernel_size']
 
-        self.embedding_table = _get_embedding_table()
+        self.embedding_table = _get_embedding_table(checkpoint_file)
 
         self.conv = [
             Conv2D(filters=32, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None,

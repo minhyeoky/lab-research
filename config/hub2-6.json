@@ -11,7 +11,9 @@
   "batch_size": 256,
   "output_size": 256,
   "n_max": 100000,
-  "epochs": 1000,
+  "epochs": 100,
   "learning_rate": 0.001,
-  "kernel_size": 4
+  "kernel_size": 4,
+  "max_len": 32,
+  "fmax": 8000
 }

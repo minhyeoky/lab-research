@@ -42,6 +42,7 @@ total_step = epochs * batch_size
 output_dir = Path(args.output_dir).joinpath(Path(args.config).name.strip('.json'))
 ckpt_dir = Path(f'{output_dir}/ckpt')
 log_dir = f'{output_dir}/tensorboard'
+checkpoint_file = os.path.join(args.data_dir, 'bert_model', 'bert_model.ckpt')
 
 if not output_dir.exists():
     output_dir.mkdir()
@@ -126,7 +127,7 @@ def train_step(x_train, step):
 # step = tf.constant(1, dtype=tf.int64)
 
 # Load model
-model = AutoEncoder(config=args.config, input_shape=dl.stft_shape)
+model = AutoEncoder(config=args.config, input_shape=dl.stft_shape, checkpoint_file=checkpoint_file)
 optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
 
 # https://www.tensorflow.org/guide/checkpoint
