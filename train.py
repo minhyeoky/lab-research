@@ -37,12 +37,17 @@ n_max = config['n_max']
 learning_rate = config['learning_rate']
 epochs = config['epochs']
 output_dir = args.output_dir
+n_steps_per_epoch = n_max // batch_size
+logging.info(f'n_steps_per_epoch: {n_steps_per_epoch}')
 save_step = 50  # TODO
 total_step = epochs * batch_size
 output_dir = Path(args.output_dir).joinpath(Path(args.config).name.strip('.json'))
 ckpt_dir = Path(f'{output_dir}/ckpt')
 log_dir = f'{output_dir}/tensorboard'
 checkpoint_file = os.path.join(args.data_dir, 'bert_model', 'bert_model.ckpt')
+weight_g = config['weight_g']
+weight_d = config['weight_d']
+weight_rec = config['weight_rec']
 
 if not output_dir.exists():
     output_dir.mkdir()
@@ -84,21 +89,21 @@ def loss_l1(x_train, pred):
     pred = _flatten(pred)
 
     loss = tf.reduce_mean(tf.abs(x_train - pred), axis=-1)
-    loss = tf.reduce_mean(loss)
+    loss = tf.reduce_mean(loss) * 10.0
 
     return loss
 
 
 def loss_d(real, fake):
-    loss_real = keras.losses.binary_crossentropy(tf.ones_like(real), real)
-    loss_fake = keras.losses.binary_crossentropy(tf.zeros_like(fake), fake)
+    loss_real = keras.losses.binary_crossentropy(tf.ones_like(real), real, label_smoothing=0.1)
+    loss_fake = keras.losses.binary_crossentropy(tf.zeros_like(fake), fake, label_smoothing=0.1)
     loss = loss_real + loss_fake
     loss = tf.reduce_mean(loss)
     return loss
 
 
 def loss_g(fake):
-    loss = keras.losses.binary_crossentropy(tf.ones_like(fake), fake)
+    loss = keras.losses.binary_crossentropy(tf.ones_like(fake), fake, label_smoothing=0.1)
     loss = tf.reduce_mean(loss)
     return loss
 
@@ -125,7 +130,7 @@ def _summary_grads(grads_and_vars, step, model):
         for grad, var in grads_and_vars:
             if grad is not None:
                 tf.summary.histogram(name=f'{model}-{var.name}/grads/histogram', data=grad, step=step)
-                tf.summary.scalar(name=f'{model}-{var.name}/grads/mean', data=tf.reduce_mean(grad), step=step)
+                tf.summary.scalar(name=f'{model}-{var.name}/grads/mean', data=tf.reduce_mean(tf.abs(grad)), step=step)
 
 
 @tf.function
@@ -135,20 +140,23 @@ def train_step(x_train, step):
         probs_fake = dis((pred, x_train[1]))
         probs_real = dis(x_train)
 
-        _loss_g = loss_l1(x_train[0], pred) + loss_g(probs_fake)
-        _loss_d = loss_d(probs_real, probs_fake)
+        _loss_l1 = loss_l1(x_train[0], pred) * weight_rec
+        _loss_g = loss_g(probs_fake) * weight_g + _loss_l1
+        _loss_d = loss_d(probs_real, probs_fake) * weight_d
 
     grads_g = tape_g.gradient(_loss_g, gen.trainable_variables)
     grads_and_vars = zip(grads_g, gen.trainable_variables)
-    _summary_grads(grads_and_vars, step, model='Generator')
+    if step % save_step == 0:
+        _summary_grads(grads_and_vars, step, model='Generator')
     opt_g.apply_gradients(zip(grads_g, gen.trainable_variables))
 
     grads_d = tape_d.gradient(_loss_d, dis.trainable_variables)
     grads_and_vars = zip(grads_d, dis.trainable_variables)
-    _summary_grads(grads_and_vars, step, model='Discriminator')
+    if step % save_step == 0:
+        _summary_grads(grads_and_vars, step, model='Discriminator')
     opt_d.apply_gradients(zip(grads_d, dis.trainable_variables))
 
-    return pred, (_loss_g, _loss_d)
+    return pred, (_loss_g, _loss_d, _loss_l1)
 
 
 # Train
@@ -161,23 +169,26 @@ opt_g = keras.optimizers.Adam(learning_rate=learning_rate, beta_1=0.5)
 opt_d = keras.optimizers.Adam(learning_rate=learning_rate, beta_1=0.5)
 
 # https://www.tensorflow.org/guide/checkpoint
-ckpt = tf.train.Checkpoint(step=tf.Variable(1, dtype=tf.int64), optimizer=opt_g, net=gen)
-manager = tf.train.CheckpointManager(ckpt, ckpt_dir, max_to_keep=10)
-ckpt.restore(manager.latest_checkpoint)
-if manager.latest_checkpoint:
-    print(f'Restored from {manager.latest_checkpoint}')
+ckpt_g = tf.train.Checkpoint(step=tf.Variable(1, dtype=tf.int64), optimizer=opt_g, net=gen)
+ckpt_d = tf.train.Checkpoint(step=tf.Variable(1, dtype=tf.int64), optimizer=opt_d, net=dis)
+manager_g = tf.train.CheckpointManager(ckpt_g, str(ckpt_dir) + '/g', max_to_keep=10)
+manager_d = tf.train.CheckpointManager(ckpt_d, str(ckpt_dir) + '/d', max_to_keep=10)
+ckpt_g.restore(manager_g.latest_checkpoint)
+ckpt_d.restore(manager_d.latest_checkpoint)
+if manager_g.latest_checkpoint:
+    print(f'Restored from {manager_g.latest_checkpoint}')
 else:
     print(f'Start from scratch')
 for epoch in range(epochs):
 
     start = time()
     for x_train in dataset_train:
-        step = ckpt.step
-        pred, loss = train_step(x_train, ckpt.step)
+        step = ckpt_g.step
+        pred, loss = train_step(x_train, ckpt_g.step)
 
-        if int(ckpt.step) % 50 == 0:
+        if int(ckpt_g.step) % 50 == 0:
             with writer_train.as_default():
-                tf.summary.scalar(name='Loss-Generator',
+                tf.summary.scalar(name='Loss-Generator-crossE',
                                   data=loss[0],
                                   step=step,
                                   description='Total Loss of Generator')
@@ -185,6 +196,10 @@ for epoch in range(epochs):
                                   data=loss[1],
                                   step=step,
                                   description='Total Loss of Discriminator')
+                tf.summary.scalar(name='Loss-Generator-l1',
+                                  data=loss[2],
+                                  step=step,
+                                  description='L1 Loss of Generator')
                 tf.summary.image(name='Spectrogram',
                                  data=tf.map_fn(_pred_to_img, pred),
                                  max_outputs=3,
@@ -198,12 +213,14 @@ for epoch in range(epochs):
 
         if step % save_step == 0:
             # tf.saved_model.save(gen, ckpt_dir=ckpt_dir)
-            save_path = manager.save()
-            print(f'Saved checkpoint for step {ckpt.step.numpy()}: {save_path}')
+            save_path_g = manager_g.save()
+            save_path_d = manager_d.save()
+            print(f'Saved checkpoint for step {ckpt_g.step.numpy()}: {save_path_g}&{save_path_d}')
             print(f'Loss {loss[0].numpy() + loss[1].numpy()}')
-        ckpt.step.assign_add(1)
+        ckpt_g.step.assign_add(1)
+        ckpt_d.step.assign_add(1)
 
     end = time()
     with writer_train.as_default():
 
-        tf.summary.scalar(name='run_time', data=(end - start) / batch_size, step=step, description='per epoch')
+        tf.summary.scalar(name='run_time', data=(end - start) / n_steps_per_epoch, step=step, description='per epoch')
