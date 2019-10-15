@@ -27,7 +27,7 @@ def load_config(file):
 def read_list(data='../data', hub=None, test=False):
     file_list = []
 
-    file_path = os.path.join(data, 'soundAttGAN/koreancorpus.xlsx')
+    file_path = os.path.join(data, 'soundAttGAN/koreancorpus_prep.xlsx')
     data_path = os.path.join(data, 'soundAttGAN')
 
     if hub:
@@ -124,9 +124,13 @@ class DataLoader:
     def stft_shape(self):
         return (self.n_fft / 2) + 1, self.sr * self.max_sec / self.hop_length
 
+    @property
+    def text_shape(self):
+        return (self.max_len,)
+
     def build(self):
         self.data_lab = read_list(data=self.data)
-        self.data_hub = read_list(data=self.data, hub=True, test=True)
+        self.data_hub = read_list(data=self.data, hub=True, test=self.test)
 
         vocab_path = os.path.join(self.data, 'bert_model', 'vocab.txt')
         logging.info(f'Reading vocab from {vocab_path}')
@@ -175,7 +179,6 @@ class DataLoader:
         """
         if data == 'lab':
             files = self.data_lab
-            raise NotImplementedError
         elif data == 'hub':
             files = self.data_hub
         else:
