@@ -11,11 +11,12 @@ import matplotlib.pyplot as plt
 import os
 from keras_bert import Tokenizer
 from utils import *
+import random
 
 import logging
 
 logger = logging.getLogger()
-logger.setLevel("DEBUG")
+logger.setLevel("INFO")
 
 
 def load_config(file):
@@ -42,11 +43,13 @@ def read_list(data='../data', hub=None, test=False):
                         txt = f.readline().strip('\n')
                 except FileNotFoundError:
                     continue
-                if txt == '':
+
+                if not txt:
                     continue
                 file_list.append({
                     "fileName": str(wav),
-                    "text": txt
+                    "text": txt,
+                    "label": "hub"
                 })
             if test:
                 break
@@ -66,10 +69,14 @@ def read_list(data='../data', hub=None, test=False):
             file_name = f"{data_path}/{int(row['fileName'])}_{int(row['suffix'])}.wav"
 
             text = row["text"]
+            if text is None or text is '' or type(text) is not str:
+                logging.debug('lab text is none')
+                return
 
             file_list.append({
                 "fileName": file_name,
-                "text": text
+                "text": text,
+                "label": "lab"
             })
 
         info_file.apply(partial(_append_to_file_list, file_list=file_list), axis=1)
@@ -91,6 +98,7 @@ class DataLoader:
         self.test = test
         self.data_lab = None
         self.data_hub = None
+        self.data_both = None
 
         # configuration json
         self.n_max = n_max
@@ -99,11 +107,10 @@ class DataLoader:
         self.window = None
         self.n_mels = None
         self.sr_hub = None
-        self.sr_lab = None
-        self.fmax = None
-        self.n_mels = None
-        self.max_sec = None
-        self.win_length = None
+        self.fmax = None  # 최대 주파수
+        self.n_mels = None  # mel spectrogram
+        self.max_sec = None  # 최대 오디오 길이
+        self.win_length = None  # stft win_length
         self.top_db = None  # 진폭/ 파워 데시벨 변환시 최대 데시벨
         self.vocab = None  # 텍스트 임베딩 사전
         self.max_len = None  # 텍스트 토크나이즈시 최대 토큰의 길이
@@ -111,7 +118,7 @@ class DataLoader:
         self.__dict__ = {**self.__dict__,
                          **self.config}
 
-        self.sr = self.sr_hub
+        self.sr = 16000
         self.tokenizer = None
 
         self.build()
@@ -140,6 +147,10 @@ class DataLoader:
 
         logging.info('Build done')
         logging.info(pformat(self.config))
+
+        self.data_both = self.data_lab + self.data_hub
+        random.shuffle(self.data_both)
+
         self._validate_build()
 
     def _validate_build(self):
@@ -172,15 +183,19 @@ class DataLoader:
         _y = librosa.db_to_amplitude(_y)
         return _y
 
-    def train_generator(self, data, norm=True, mel_spectrogram=False, return_text=False):
+    def train_generator(self, data, norm=True, mel_spectrogram=False, return_text=False, return_label=False):
         """audio Generator
 
         :return: y, sr
         """
+        if return_text == True and return_label == True:
+            raise ValueError
         if data == 'lab':
             files = self.data_lab
         elif data == 'hub':
             files = self.data_hub
+        elif data == 'both':
+            files = self.data_both
         else:
             raise TypeError
 
@@ -191,14 +206,22 @@ class DataLoader:
         for each in files:
             file_name = each['fileName']
             text = each['text']
-            if return_text:
-                text = self.tokenizer.encode(text, second=None, max_len=self.max_len)[0]
-                yield text
-                continue
-
+            label = each['label']
             _y, _sr = librosa.load(file_name, sr=self.sr)
 
             if not self._check_sec(_y):
+                continue
+
+            if return_label:
+                if label == 'hub':
+                    yield 1
+                else:
+                    yield 0
+                continue
+            if return_text:
+                logging.debug(text)
+                text = self.tokenizer.encode(text, second=None, max_len=self.max_len)[0]
+                yield text
                 continue
 
             _y = self._pad_audio(_y)
@@ -237,11 +260,13 @@ class DataLoader:
         3. amplitude to decibel
         """
         # [shape=(n_mels, t)]
+        raise NotImplementedError
         return librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.config['n_mels'], n_fft=self.config['n_fft'],
                                               S=None, hop_length=self.config['hop_length'], win_length=None,
                                               window=self.config['window'], center=True, pad_mode='reflect', power=2.0)
 
     def _mel_to_audio(self, mel):
+        raise NotImplementedError
         return librosa.feature.inverse.mel_to_audio(mel, sr=self.config['sr_hub'], n_fft=self.config['n_fft'],
                                                     hop_length=self.config['hop_length'])
 
@@ -284,6 +309,7 @@ class DataLoader:
             y, sr = librosa.load(path)
 
         else:
+            raise NotImplementedError
             y, sr = librosa.load(random.choice(self.data_hub)['fileName'], sr=self.config['sr_hub'])
 
         if mel_to_audio:

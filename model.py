@@ -84,7 +84,7 @@ class Generator(keras.models.Model):
 
     @tf.function
     def call(self, inputs, **kwargs):
-        audio, text = inputs
+        audio, text, _ = inputs
         audio = tf.expand_dims(audio, -1)
 
         for layer in self.conv:

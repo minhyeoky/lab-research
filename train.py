@@ -48,6 +48,8 @@ checkpoint_file = os.path.join(args.data_dir, 'bert_model', 'bert_model.ckpt')
 weight_g = config['weight_g']
 weight_d = config['weight_d']
 weight_rec = config['weight_rec']
+data_type = config['data_type']
+shuffle_buffer = batch_size * 10 if batch_size * 10 < n_max else n_max
 
 if not output_dir.exists():
     output_dir.mkdir()
@@ -56,14 +58,16 @@ if not ckpt_dir.exists():
 
 # Data
 dl: DataLoader = DataLoader(config=args.config, data=args.data_dir, n_max=n_max)
-dataset_audio = tf.data.Dataset.from_generator(partial(dl.train_generator, data='hub'),
+dataset_audio = tf.data.Dataset.from_generator(partial(dl.train_generator, data=data_type),
                                                output_types=tf.float32,
                                                output_shapes=dl.stft_shape)
-dataset_text = tf.data.Dataset.from_generator(partial(dl.train_generator, data='hub', return_text=True),
+dataset_text = tf.data.Dataset.from_generator(partial(dl.train_generator, data=data_type, return_text=True),
                                               output_types=tf.int32,
                                               output_shapes=dl.text_shape)
-dataset_train = tf.data.Dataset.zip((dataset_audio, dataset_text))
-dataset_train = dataset_train.shuffle(buffer_size=batch_size * 10).batch(batch_size)
+dataset_label = tf.data.Dataset.from_generator(partial(dl.train_generator, data=data_type, return_label=True),
+                                              output_types=tf.int32)
+dataset_train = tf.data.Dataset.zip((dataset_audio, dataset_text, dataset_label))
+dataset_train = dataset_train.shuffle(buffer_size=shuffle_buffer).batch(batch_size)
 
 # Train setup
 
@@ -84,26 +88,30 @@ def _flatten(x):
     return x
 
 
-def loss_l1(x_train, pred):
-    x_train = _flatten(x_train)
+def loss_l1(true, pred):
+    true = _flatten(true)
     pred = _flatten(pred)
 
-    loss = tf.reduce_mean(tf.abs(x_train - pred), axis=-1)
+    loss = tf.reduce_mean(tf.abs(true - pred), axis=-1)
     loss = tf.reduce_mean(loss) * 10.0
 
     return loss
 
 
-def loss_d(real, fake):
-    loss_real = keras.losses.binary_crossentropy(tf.ones_like(real), real, label_smoothing=0.1)
-    loss_fake = keras.losses.binary_crossentropy(tf.zeros_like(fake), fake, label_smoothing=0.1)
+def loss_d(real, fake, real_true=None):
+    # if real_true:
+    loss_real = keras.losses.binary_crossentropy(real_true, real, label_smoothing=0.05)
+    # else:
+    #     raise ValueError
+    #     loss_real = keras.losses.binary_crossentropy(tf.ones_like(real), real, label_smoothing=0.2)
+    loss_fake = keras.losses.binary_crossentropy(tf.zeros_like(fake), fake, label_smoothing=0.2)
     loss = loss_real + loss_fake
     loss = tf.reduce_mean(loss)
     return loss
 
 
 def loss_g(fake):
-    loss = keras.losses.binary_crossentropy(tf.ones_like(fake), fake, label_smoothing=0.1)
+    loss = keras.losses.binary_crossentropy(tf.ones_like(fake), fake, label_smoothing=0.2)
     loss = tf.reduce_mean(loss)
     return loss
 
@@ -138,11 +146,11 @@ def train_step(x_train, step):
     with tf.GradientTape() as tape_g, tf.GradientTape() as tape_d:
         pred = gen(x_train)
         probs_fake = dis((pred, x_train[1]))
-        probs_real = dis(x_train)
+        probs_real = dis((x_train[0], x_train[1]))
 
         _loss_l1 = loss_l1(x_train[0], pred) * weight_rec
         _loss_g = loss_g(probs_fake) * weight_g + _loss_l1
-        _loss_d = loss_d(probs_real, probs_fake) * weight_d
+        _loss_d = loss_d(probs_real, probs_fake, x_train[2]) * weight_d
 
     grads_g = tape_g.gradient(_loss_g, gen.trainable_variables)
     grads_and_vars = zip(grads_g, gen.trainable_variables)
@@ -176,9 +184,9 @@ manager_d = tf.train.CheckpointManager(ckpt_d, str(ckpt_dir) + '/d', max_to_keep
 ckpt_g.restore(manager_g.latest_checkpoint)
 ckpt_d.restore(manager_d.latest_checkpoint)
 if manager_g.latest_checkpoint:
-    print(f'Restored from {manager_g.latest_checkpoint}')
+    logging.info(f'Restored from {manager_g.latest_checkpoint}')
 else:
-    print(f'Start from scratch')
+    logging.info(f'Start from scratch...')
 for epoch in range(epochs):
 
     start = time()
@@ -204,7 +212,7 @@ for epoch in range(epochs):
                                  data=tf.map_fn(_pred_to_img, pred),
                                  max_outputs=3,
                                  step=step,
-                                 description='복원된 스펙트로그')
+                                 description='복원된 스펙트로그램')
                 tf.summary.audio(name='Restored Audio',
                                  data=tf.expand_dims(tf.map_fn(_pred_to_audio, pred), axis=-1),
                                  sample_rate=dl.sr,
@@ -215,8 +223,8 @@ for epoch in range(epochs):
             # tf.saved_model.save(gen, ckpt_dir=ckpt_dir)
             save_path_g = manager_g.save()
             save_path_d = manager_d.save()
-            print(f'Saved checkpoint for step {ckpt_g.step.numpy()}: {save_path_g}&{save_path_d}')
-            print(f'Loss {loss[0].numpy() + loss[1].numpy()}')
+            logging.info(f'Saved checkpoint for step {ckpt_g.step.numpy()}: {save_path_g}&{save_path_d}')
+            logging.info(f'Loss {loss[0].numpy() + loss[1].numpy()}')
         ckpt_g.step.assign_add(1)
         ckpt_d.step.assign_add(1)
 
