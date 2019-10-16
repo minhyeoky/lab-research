@@ -2,6 +2,7 @@ import json
 import random
 from functools import partial
 from pathlib import Path
+from pathlib import PosixPath
 from pprint import pformat
 import pandas as pd
 import numpy as np
@@ -16,7 +17,7 @@ import random
 import logging
 
 logger = logging.getLogger()
-logger.setLevel("INFO")
+logger.setLevel("DEBUG")
 
 
 def load_config(file):
@@ -229,8 +230,7 @@ class DataLoader:
             if norm:
                 _y = self._norm(_y)
 
-            _y = librosa.stft(_y, n_fft=self.n_fft, hop_length=self.hop_length, window=self.config['window'],
-                              win_length=self.win_length)
+            _y = self._stft(_y)
             _y = np.abs(_y)
             # _y = self._norm_stft(_y)
             # _y = self._norm(_y)
@@ -245,6 +245,49 @@ class DataLoader:
             _n_iter += 1
 
             yield _y
+
+    def load_infer_data(self, audio_file: PosixPath):
+        """Load data for inference
+
+        :param audio_file: (PosixPath) 대상 파일 경로
+        :return: Generator inputs
+        """
+        logging.debug(audio_file)
+        text = None
+
+        _y, _sr = librosa.load(audio_file, sr=self.sr)
+
+        if not self._check_sec(_y):
+            logging.info(f'audio length is too long: {audio_file} - {_y.shape[0]}')
+            return False
+
+        for each in self.data_both:
+            if Path(each['fileName']).name == audio_file.name:
+                text = each['text']
+                break
+
+        if text is None:
+            logging.error(f'audio cannot be found : {audio_file}')
+            return False
+
+        _y = self._pad_audio(_y)
+        _y = self._norm(_y)
+        _y = self._stft(_y)
+        _y = np.abs(_y)
+
+        logging.info(f'{audio_file}: {text}')
+        text = self.tokenizer.encode(text, second=None, max_len=self.max_len)[0]
+
+        # Add batch axis & Dummy labelŒ
+        _y = np.expand_dims(_y, axis=0)
+        text = np.expand_dims(text, axis=0)
+        label = np.array([[0]])
+
+        return _y, text, label
+
+    def _stft(self, y):
+        return librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length, window=self.config['window'],
+                            win_length=self.win_length)
 
     def _pad_audio(self, y):
         _y = np.zeros(shape=[self.sr * self.max_sec - 1])
