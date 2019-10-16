@@ -38,7 +38,7 @@ epochs = config['epochs']
 output_dir = args.output_dir
 n_steps_per_epoch = n_max // batch_size
 logging.info(f'n_steps_per_epoch: {n_steps_per_epoch}')
-save_step = 50  # TODO
+save_step = 100  # TODO
 total_step = epochs * batch_size
 output_dir = Path(args.output_dir).joinpath(Path(args.config).name.strip('.json'))
 ckpt_dir = Path(f'{output_dir}/ckpt')
@@ -58,13 +58,13 @@ if not ckpt_dir.exists():
 
 # Data
 dl: DataLoader = DataLoader(config=args.config, data=args.data_dir, n_max=n_max, test=args.infer)
-dataset_audio = tf.data.Dataset.from_generator(partial(dl.train_generator, data=data_type),
+dataset_audio = tf.data.Dataset.from_generator(partial(dl.generator, data=data_type),
                                                output_types=tf.float32,
                                                output_shapes=dl.stft_shape)
-dataset_text = tf.data.Dataset.from_generator(partial(dl.train_generator, data=data_type, return_text=True),
+dataset_text = tf.data.Dataset.from_generator(partial(dl.generator, data=data_type, return_text=True),
                                               output_types=tf.int32,
                                               output_shapes=dl.text_shape)
-dataset_label = tf.data.Dataset.from_generator(partial(dl.train_generator, data=data_type, return_label=True),
+dataset_label = tf.data.Dataset.from_generator(partial(dl.generator, data=data_type, return_label=True),
                                                output_types=tf.int32)
 dataset_train = tf.data.Dataset.zip((dataset_audio, dataset_text, dataset_label))
 dataset_train = dataset_train.shuffle(buffer_size=shuffle_buffer).batch(batch_size)

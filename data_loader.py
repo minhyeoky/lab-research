@@ -97,9 +97,12 @@ class DataLoader:
 
         self.data = data
         self.test = test
-        self.data_lab = None
-        self.data_hub = None
-        self.data_both = None
+        self.data_lab_train = None
+        self.data_lab_valid = None
+        self.data_hub_train = None
+        self.data_hub_valid = None
+        self.data_both_train = None
+        self.data_both_valid = None
 
         # configuration json
         self.n_max = n_max
@@ -115,6 +118,7 @@ class DataLoader:
         self.top_db = None  # 진폭/ 파워 데시벨 변환시 최대 데시벨
         self.vocab = None  # 텍스트 임베딩 사전
         self.max_len = None  # 텍스트 토크나이즈시 최대 토큰의 길이
+        self.n_valid = None  # 검증셋의 갯수
 
         self.__dict__ = {**self.__dict__,
                          **self.config}
@@ -137,8 +141,12 @@ class DataLoader:
         return (self.max_len,)
 
     def build(self):
-        self.data_lab = read_list(data=self.data)
-        self.data_hub = read_list(data=self.data, hub=True, test=self.test)
+        data_hub = read_list(data=self.data, hub=True, test=self.test)
+        data_lab = read_list(data=self.data)
+        self.data_lab_train = data_lab[self.n_valid:]
+        self.data_hub_train = data_hub[self.n_valid:]
+        self.data_lab_valid = data_lab[:self.n_valid]
+        self.data_hub_valid = data_hub[:self.n_valid]
 
         vocab_path = os.path.join(self.data, 'bert_model', 'vocab.txt')
         logging.info(f'Reading vocab from {vocab_path}')
@@ -149,8 +157,10 @@ class DataLoader:
         logging.info('Build done')
         logging.info(pformat(self.config))
 
-        self.data_both = self.data_lab + self.data_hub
-        random.shuffle(self.data_both)
+        self.data_both_train = self.data_lab_train + self.data_hub_train
+        self.data_both_valid = self.data_hub_valid + self.data_lab_valid
+        random.shuffle(self.data_both_train)
+        random.shuffle(self.data_both_valid)
 
         self._validate_build()
 
@@ -184,7 +194,8 @@ class DataLoader:
         _y = librosa.db_to_amplitude(_y)
         return _y
 
-    def train_generator(self, data, norm=True, mel_spectrogram=False, return_text=False, return_label=False):
+    def generator(self, data, valid=False, norm=True, mel_spectrogram=False, return_text=False,
+                  return_label=False):
         """audio Generator
 
         :return: y, sr
@@ -192,11 +203,20 @@ class DataLoader:
         if return_text == True and return_label == True:
             raise ValueError
         if data == 'lab':
-            files = self.data_lab
+            if valid:
+                files = self.data_lab_valid
+            else:
+                files = self.data_lab_train
         elif data == 'hub':
-            files = self.data_hub
+            if valid:
+                files = self.data_hub_valid
+            else:
+                files = self.data_hub_train
         elif data == 'both':
-            files = self.data_both
+            if valid:
+                files = self.data_both_valid
+            else:
+                files = self.data_both_train
         else:
             raise TypeError
 
@@ -261,7 +281,7 @@ class DataLoader:
             logging.info(f'audio length is too long: {audio_file} - {_y.shape[0]}')
             return False
 
-        for each in self.data_both:
+        for each in self.data_both_train:
             if Path(each['fileName']).name == audio_file.name:
                 text = each['text']
                 break
@@ -370,7 +390,7 @@ class DataLoader:
 
         :return: audio
         """
-        it = iter(self.train_generator(data='hub'))
+        it = iter(self.generator(data='hub'))
         r_number = random.randint(0, 100)
         for _ in range(r_number):
             _y = next(it)

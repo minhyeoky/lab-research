@@ -153,6 +153,10 @@ class Discriminator(keras.models.Model):
             Dense(units=1, activation=None),
             keras.layers.Activation('sigmoid')
         ]
+
+        # self.cls = [
+        #     Dense(units=)
+        # ]
         self.embed_hidden = Dense(units=self.hidden_size[0] * self.hidden_size[1])
 
     @tf.function
@@ -164,6 +168,7 @@ class Discriminator(keras.models.Model):
             audio = layer(audio)
 
         audio = self._concat_text(audio, text)
+
 
         for layer in self.prob:
             audio = layer(audio)
