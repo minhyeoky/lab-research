@@ -10,7 +10,6 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import os
-from keras_bert import Tokenizer
 from utils import *
 import random
 
@@ -20,13 +19,7 @@ logger = logging.getLogger()
 logger.setLevel("DEBUG")
 
 
-def load_config(file):
-    with open(file) as f:
-        data = json.load(f)
-    return data
-
-
-def read_list(data='../data', hub=None, test=False):
+def read_list(data, max_sec, hub=None, example=False):
     file_list = []
 
     file_path = os.path.join(data, 'soundAttGAN/koreancorpus_prep.xlsx')
@@ -39,20 +32,14 @@ def read_list(data='../data', hub=None, test=False):
         for each in p.iterdir():
             logging.debug(each)
             for wav in each.glob('*.wav'):
-                try:
-                    with open(str(wav).replace('.pcm.wav', '') + '.txt.prep', mode='r', encoding='utf8') as f:
-                        txt = f.readline().strip('\n')
-                except FileNotFoundError:
-                    continue
-
-                if not txt:
+                filename = str(wav)
+                if not DataLoader.check_sec(filename, max_sec):
                     continue
                 file_list.append({
-                    "fileName": str(wav),
-                    "text": txt,
+                    "filename": filename,
                     "label": "hub"
                 })
-            if test:
+            if example:
                 break
 
     else:
@@ -67,16 +54,12 @@ def read_list(data='../data', hub=None, test=False):
             :param file_list:
             :return: None
             """
-            file_name = f"{data_path}/{int(row['fileName'])}_{int(row['suffix'])}.wav"
+            filename = f"{data_path}/{int(row['fileName'])}_{int(row['suffix'])}.wav"
 
-            text = row["text"]
-            if text is None or text is '' or type(text) is not str:
-                logging.debug('lab text is none')
+            if not DataLoader.check_sec(filename, max_sec):
                 return
-
             file_list.append({
-                "fileName": file_name,
-                "text": text,
+                "filename": filename,
                 "label": "lab"
             })
 
@@ -91,42 +74,35 @@ def read_list(data='../data', hub=None, test=False):
 
 class DataLoader:
 
-    def __init__(self, config, data, n_max, test=False):
+    def __init__(self, config, data):
         logging.info(f'DataLoader initializing')
         self.config = load_config(config)
 
-        self.data = data
-        self.test = test
+        self.data = data  # data dir
+
+        # dataset list<str>
         self.data_lab_train = None
         self.data_lab_valid = None
         self.data_hub_train = None
         self.data_hub_valid = None
-        self.data_both_train = None
-        self.data_both_valid = None
 
         # configuration json
-        self.n_max = n_max
-        self.n_fft = None
-        self.hop_length = None
-        self.window = None
-        self.n_mels = None
-        self.sr_hub = None
+        self.n_max = None  # 데이터 수 제
+        self.n_fft = None  # STFT N_FFT
+        self.hop_length = None  # STFT frame length
+        self.window = None  # STFT window function name
         self.fmax = None  # 최대 주파수
-        self.n_mels = None  # mel spectrogram
         self.max_sec = None  # 최대 오디오 길이
         self.win_length = None  # stft win_length
         self.top_db = None  # 진폭/ 파워 데시벨 변환시 최대 데시벨
-        self.vocab = None  # 텍스트 임베딩 사전
-        self.max_len = None  # 텍스트 토크나이즈시 최대 토큰의 길이
         self.n_valid = None  # 검증셋의 갯수
 
         self.__dict__ = {**self.__dict__,
                          **self.config}
 
         self.sr = 16000
-        self.tokenizer = None
 
-        self.build()
+        self._build()
 
     # @property
     # def mel_shape(self):
@@ -137,134 +113,100 @@ class DataLoader:
         return (self.n_fft / 2) + 1, self.sr * self.max_sec / self.hop_length
 
     @property
-    def text_shape(self):
-        return (self.max_len,)
+    def n_hub(self):
+        return len(self.data_hub_train) + len(self.data_hub_valid)
 
-    def build(self):
-        data_hub = read_list(data=self.data, hub=True, test=self.test)
-        data_lab = read_list(data=self.data)
+    @property
+    def n_lab(self):
+        return len(self.data_lab_train) + len(self.data_lab_valid)
+
+    def _build(self):
+        data_hub = read_list(data=self.data, hub=True, max_sec=self.max_sec)
+        data_lab = read_list(data=self.data, max_sec=self.max_sec)
+
+        data_hub = data_hub[:self.n_max]
+        data_lab = data_lab[:self.n_max]
+
         self.data_lab_train = data_lab[self.n_valid:]
         self.data_hub_train = data_hub[self.n_valid:]
         self.data_lab_valid = data_lab[:self.n_valid]
         self.data_hub_valid = data_hub[:self.n_valid]
 
-        vocab_path = os.path.join(self.data, 'bert_model', 'vocab.txt')
-        logging.info(f'Reading vocab from {vocab_path}')
-        self.vocab = load_vocab(vocab_path)
-        logging.info(f'The number of vocab is {len(self.vocab)}')
-        self.tokenizer = Tokenizer(self.vocab, cased=True)
-
-        logging.info('Build done')
-        logging.info(pformat(self.config))
-
-        self.data_both_train = self.data_lab_train + self.data_hub_train
-        self.data_both_valid = self.data_hub_valid + self.data_lab_valid
-        random.shuffle(self.data_both_train)
-        random.shuffle(self.data_both_valid)
-
         self._validate_build()
 
+        logging.info('Build Done')
+        logging.info('== Dataloader paramters ==')
+        logging.info(pformat(self.config))
+        logging.info('== Number of dataset == ')
+        logging.info(f'= HUB: {self.n_hub}')
+        logging.info(f'= LAB: {self.n_lab}')
+
     def _validate_build(self):
+        """할당되지 않은 변수가 있는 지 확인"""
         for key, value in self.__dict__.items():
             if value is None:
                 raise ValueError(f'{key} is None')
-        return True
 
-    def _check_sec(self, y):
-        sec = y.shape[0] / self.sr
-        if sec >= self.max_sec:
+    @staticmethod
+    def check_sec(filename, max_sec):
+        if not isinstance(filename, str):
+            raise TypeError
+
+        sec = librosa.get_duration(filename=filename)
+
+        if sec < max_sec:
             return False
         else:
             return True
 
-    def _norm(self, y):
+    @staticmethod
+    def _norm(y):
+        """음성 크기 (진폭) -1.0~1.0 정규화"""
         div = max(y.max(), abs(y.min()))
         y = y * (1. / div)
         return y
 
-    def _norm_stft(self, y):
-        raise NotImplementedError
-        _y = self._norm(y)
-        _y = librosa.amplitude_to_db(_y, ref=np.max, top_db=self.top_db)
-        _y = (_y + self.top_db / 2.0) / (self.top_db / 2.0)
-        return _y
-
-    def _denorm_stft(self, y):
-        _y = y * (self.top_db / 2.0) - self.top_db / 2.0
-        _y = librosa.db_to_amplitude(_y)
-        return _y
-
-    def generator(self, data, valid=False, norm=True, mel_spectrogram=False, return_text=False,
-                  return_label=False):
+    def generator(self, data_type, valid=False, norm=True, return_label=False):
         """audio Generator
 
         :return: y, sr
         """
-        if return_text == True and return_label == True:
-            raise ValueError
-        if data == 'lab':
+        if data_type == 'lab':
             if valid:
                 files = self.data_lab_valid
             else:
                 files = self.data_lab_train
-        elif data == 'hub':
+        elif data_type == 'hub':
             if valid:
                 files = self.data_hub_valid
             else:
                 files = self.data_hub_train
-        elif data == 'both':
-            if valid:
-                files = self.data_both_valid
-            else:
-                files = self.data_both_train
         else:
             raise TypeError
 
-        _n_iter = 0
-        _mel_filter = librosa.filters.mel(sr=self.sr, n_fft=self.n_fft, n_mels=self.n_mels,
-                                          fmax=self.fmax)
-
         for each in files:
-            file_name = each['fileName']
-            text = each['text']
+            file_name = each['filename']
             label = each['label']
             _y, _sr = librosa.load(file_name, sr=self.sr)
 
-            if not self._check_sec(_y):
-                continue
-
             if return_label:
+                raise NotImplementedError
                 if label == 'hub':
                     yield 1
                 else:
                     yield 0
                 continue
-            if return_text:
-                logging.debug(text)
-                text = self.tokenizer.encode(text, second=None, max_len=self.max_len)[0]
-                yield text
-                continue
 
-            _y = self._pad_audio(_y)
-
-            if norm:
-                _y = self._norm(_y)
-
-            _y = self._stft(_y)
-            _y = np.abs(_y)
-            # _y = self._norm_stft(_y)
-            # _y = self._norm(_y)
-
-            if mel_spectrogram:
-                raise NotImplementedError
-                _y = np.dot(_mel_filter, _y)
-
-            if self.n_max is not None:
-                if _n_iter == self.n_max:
-                    break
-            _n_iter += 1
+            _y = self._prep_audio(_y)
 
             yield _y
+
+    def _prep_audio(self, y):
+        y = self._trunc_audio(y)
+        y = self._norm(y)
+        y = self._stft(y)
+        y = np.abs(y)
+        return y
 
     def load_infer_data(self, audio_file: PosixPath):
         """Load data for inference
@@ -273,70 +215,32 @@ class DataLoader:
         :return: Generator inputs
         """
         logging.debug(audio_file)
-        text = None
 
         _y, _sr = librosa.load(audio_file, sr=self.sr)
+        _y = self._prep_audio(_y)
 
-        if not self._check_sec(_y):
-            logging.info(f'audio length is too long: {audio_file} - {_y.shape[0]}')
-            return False
-
-        for each in self.data_both_train:
-            if Path(each['fileName']).name == audio_file.name:
-                text = each['text']
-                break
-
-        if text is None:
-            logging.error(f'audio cannot be found : {audio_file}')
-            return False
-
-        _y = self._pad_audio(_y)
-        _y = self._norm(_y)
-        _y = self._stft(_y)
-        _y = np.abs(_y)
-
-        logging.info(f'{audio_file}: {text}')
-        text = self.tokenizer.encode(text, second=None, max_len=self.max_len)[0]
-
-        # Add batch axis & Dummy labelŒ
+        # Add batch axis
         _y = np.expand_dims(_y, axis=0)
-        text = np.expand_dims(text, axis=0)
-        label = np.array([[0]])
 
-        return _y, text, label
+        return _y
 
     def _stft(self, y):
         return librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length, window=self.config['window'],
                             win_length=self.win_length)
 
+    def _trunc_audio(self, y):
+        _y = y[0:self.sr * self.max_sec]
+        return _y
+
     def _pad_audio(self, y):
+        raise NotImplementedError
         _y = np.zeros(shape=[self.sr * self.max_sec - 1])
         # **-1** - stft time axis shape 조절
         _y[0:y.shape[0]] = y
         return _y
 
-    def _melspectrogram(self, y):
-        """Compute a mel-scaled spectrogram
-
-        1. stft
-        2. absolute
-        3. amplitude to decibel
-        """
-        # [shape=(n_mels, t)]
-        raise NotImplementedError
-        return librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.config['n_mels'], n_fft=self.config['n_fft'],
-                                              S=None, hop_length=self.config['hop_length'], win_length=None,
-                                              window=self.config['window'], center=True, pad_mode='reflect', power=2.0)
-
-    def _mel_to_audio(self, mel):
-        raise NotImplementedError
-        return librosa.feature.inverse.mel_to_audio(mel, sr=self.config['sr_hub'], n_fft=self.config['n_fft'],
-                                                    hop_length=self.config['hop_length'])
-
-    #     def istft(self, stft_matrix):
-    #         return librosa.istft(stft_matrix=stft_matrix, hop_length=self.config['hop_length'])
-
     def _power_to_db(self, s):
+        raise NotImplementedError
         return librosa.power_to_db(s, ref=np.max)
 
     def specshow(self, y, mel=False, return_figure=False):
@@ -346,18 +250,13 @@ class DataLoader:
         :return: axis
         """
         fig = plt.figure()
-        if mel:
-            y = self._power_to_db(y, ref=np.max)
-            axes = librosa.display.specshow(y, y_axis='mel', x_axis='time')
-            plt.title('Mel spectrogram')
-        else:
-            y = librosa.amplitude_to_db(y, ref=np.max)
-            axes = librosa.display.specshow(y, hop_length=self.config['hop_length'],
-                                            fmax=self.fmax,
-                                            sr=self.sr,
-                                            y_axis='linear',
-                                            x_axis='time')
-            plt.title('Magnitude spectrogram')
+        y = librosa.amplitude_to_db(y, ref=np.max)
+        axes = librosa.display.specshow(y, hop_length=self.config['hop_length'],
+                                        fmax=self.fmax,
+                                        sr=self.sr,
+                                        y_axis='linear',
+                                        x_axis='time')
+        plt.title('Magnitude spectrogram')
 
         plt.colorbar(format='%+2.0f dB')
         plt.tight_layout()
@@ -367,13 +266,14 @@ class DataLoader:
 
     def random_audio(self, path=None, mel_to_audio=False, specshow=True):
 
+        raise NotImplementedError
         if path:
             raise NotImplementedError
             y, sr = librosa.load(path)
 
         else:
             raise NotImplementedError
-            y, sr = librosa.load(random.choice(self.data_hub)['fileName'], sr=self.config['sr_hub'])
+            y, sr = librosa.load(random.choice(self.data_hub)['filename'], sr=self.config['sr_hub'])
 
         if mel_to_audio:
             y = self._melspectrogram(y)
@@ -384,17 +284,6 @@ class DataLoader:
             pass
 
         return y, sr
-
-    def test_train_generator(self):
-        """
-
-        :return: audio
-        """
-        it = iter(self.generator(data='hub'))
-        r_number = random.randint(0, 100)
-        for _ in range(r_number):
-            _y = next(it)
-        return self._mel_to_audio(_y)
 
 
 if __name__ == "__main__":
