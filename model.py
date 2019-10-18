@@ -136,6 +136,7 @@ class Discriminator(keras.models.Model):
     @tf.function
     def call(self, inputs, **kwargs):
         orig, tar = inputs
+
         orig = tf.expand_dims(orig, -1)
         tar = tf.expand_dims(tar, -1)
         x = keras.layers.concatenate([orig, tar])

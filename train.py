@@ -25,6 +25,8 @@ parser.add_argument('--data_dir', default='../data', type=str)
 parser.add_argument('--output_dir', default='../data/experiment/output', type=str)
 parser.add_argument('--infer', default=False, type=bool, required=False)
 parser.add_argument('--infer_audio', default='', type=str, required=False)
+parser.add_argument('--log_level', default='INFO', type=str, required=False)
+parser.add_argument('--save_step', default=100, type=int, required=False)
 args = parser.parse_args()
 
 logging.info(f'setting configuration from {args.config}')
@@ -46,6 +48,8 @@ ckpt_dir = Path(f'{output_dir}/ckpt')
 log_dir = f'{output_dir}/tensorboard'
 checkpoint_file = os.path.join(args.data_dir, 'bert_model', 'bert_model.ckpt')
 shuffle_buffer_size = batch_size * 10 if batch_size * 10 < n_max else n_max  # 버퍼 > n_max라면 버퍼만 채우는 오류 수정
+
+logging.getLogger().setLevel(args.log_level)
 
 logging.info(f'n_steps_per_epoch: {n_steps_per_epoch}')
 logging.info(f'total_step: {total_step}')
@@ -69,8 +73,7 @@ dataset_kor = tf.data.Dataset.from_generator(partial(dl.generator, data_type='hu
                                              output_types=tf.float32,
                                              output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
 
-dataset_train = tf.data.Dataset.zip((dataset_fgn, dataset_kor)).batch(batch_size).prefetch(
-    tf.data.experimental.AUTOTUNE)  # x [0] => 외국인 / y [1] => 한국인
+dataset_train = tf.data.Dataset.zip((dataset_fgn, dataset_kor)).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)  # x [0] => 외국인 / y [1] => 한국인
 
 # Write config.json
 with open(f'{output_dir}/config.json', mode='w', encoding='utf8') as f:
@@ -82,9 +85,15 @@ writer_train = tf.summary.create_file_writer(log_dir)
 # Losses
 def L_GAN(orig, pred):
     """Binary cross entropy loss"""
+    orig = tf.squeeze(orig)
+    pred = tf.squeeze(pred)
+    orig = tf.reduce_mean(orig, axis=-1)
+    orig = tf.reduce_mean(orig, axis=-1)
+    pred = tf.reduce_mean(pred, axis=-1)
+    pred = tf.reduce_mean(pred, axis=-1)
+    logging.debug(f'orig: {orig}')
     loss = keras.losses.binary_crossentropy(y_true=tf.ones_like(orig), y_pred=orig)
-    loss -= keras.losses.binary_crossentropy(y_true=tf.ones_like(pred), y_pred=pred)
-    # Argmin log(1 - D(x, G(x, z))) -> Argmin -log(D(x, G(x, z)))
+    loss += keras.losses.binary_crossentropy(y_true=tf.zeros_like(pred), y_pred=pred)
     loss = tf.reduce_mean(loss)
     return loss
 
@@ -101,7 +110,6 @@ def L_cycle(true, pred):
 
     loss = tf.reduce_mean(tf.abs(true - pred), axis=-1)
     loss = tf.reduce_mean(loss)
-
     return loss
 
 
@@ -128,7 +136,7 @@ def _pred_to_audio(x):
 
 
 # tensorboard
-def _summary_grads(grads_and_vars, step, model):
+def _summary_grads(grads_and_vars, step, model_name):
     """Gradient log to check whether train is working or not
 
     1. histogram of gradients
@@ -138,8 +146,10 @@ def _summary_grads(grads_and_vars, step, model):
     with writer_train.as_default():
         for grad, var in grads_and_vars:
             if grad is not None:
-                tf.summary.histogram(name=f'{model}-{var.name}/grads/histogram', data=grad, step=step)
-                tf.summary.scalar(name=f'{model}-{var.name}/grads/mean', data=tf.reduce_mean(tf.abs(grad)), step=step)
+                tf.summary.histogram(name=f'{model_name}-{var.name}/grads/histogram',
+                                     data=grad, step=step)
+                tf.summary.scalar(name=f'{model_name}-{var.name}/grads/mean',
+                                  data=tf.reduce_mean(tf.abs(grad)), step=step)
 
 
 def _summary_content(content, step):
@@ -188,6 +198,7 @@ def _summary_content(content, step):
 
 
 def _summary_losses(losses, step):
+    logging.debug(f'_summary_losses-losses: {losses}')
     loss_cycle, loss_gan, loss = losses
     with writer_train.as_default():
         tf.summary.scalar(name='loss_cycle-x',
@@ -212,40 +223,53 @@ def _summary_losses(losses, step):
 
 @tf.function
 def train_step(x_train, step):
-    with tf.GradientTape() as tape_G, tf.GradientTape() as tape_F, tf.GradientTape() as tape_Dx, tf.GradientTape() as tape_Dy:
-        x, y = x_train
-        y_generated = G(x)
-        x_generated = F(y)
+    with tf.GradientTape() as tape_G, tf.GradientTape() as tape_F, \
+            tf.GradientTape() as tape_Dx, tf.GradientTape() as tape_Dy:
+        x = x_train[0]
+        y = x_train[1]
+        y_generated = G(inputs=x)
+        x_generated = F(inputs=y)
 
-        probs_x = Dx(x)
-        probs_y = Dy(y)
-        probs_x_generated = Dx(x_generated)
-        probs_y_generated = Dy(y_generated)
+        y_restored = G(inputs=x_generated)
+        x_restored = F(inputs=y_generated)
 
-        _loss_cycle_x = L_cycle(x, x_generated)
-        _loss_cycle_y = L_cycle(y, y_generated)
+        probs_x = Dx(inputs=(x, x))
+        probs_y = Dy(inputs=(y, y))
+        probs_x_generated = Dx(inputs=(x, x_generated))
+        probs_y_generated = Dy(inputs=(y, y_generated))
+
+        logging.debug(f'probs_x: {pformat(probs_x)}')
+
+        _loss_cycle_x = L_cycle(x, x_restored)
+        _loss_cycle_y = L_cycle(y, y_restored)
 
         _loss_gan_x = L_GAN(probs_x, probs_x_generated)
         _loss_gan_y = L_GAN(probs_y, probs_y_generated)
 
         l_cycle = (_loss_cycle_x + _loss_cycle_y) * weight_cycle
         l_gan = _loss_gan_x + _loss_gan_y
+        loss = l_gan + l_cycle
 
-    grads_G = tape_G.gradient(l_cycle + l_gan, G.trainable_variables)
-    grads_F = tape_G.gradient(l_cycle + l_gan, F.trainable_variables)
-    grads_Dx = tape_G.gradient(l_gan, Dx.trainable_variables)
-    grads_Dy = tape_G.gradient(l_gan, Dy.trainable_variables)
+    grads_G = tape_G.gradient(loss, G.trainable_variables)
+    grads_F = tape_F.gradient(loss, F.trainable_variables)
+    grads_Dx = tape_Dx.gradient(l_gan, Dx.trainable_variables)
+    grads_Dy = tape_Dy.gradient(l_gan, Dy.trainable_variables)
 
-    def _grads_fn(grads, model, opt):
-        if step % save_step == 0:
+    logging.debug(pformat(grads_G))
+    logging.debug(pformat(grads_F))
+    logging.debug(pformat(grads_Dx))
+    logging.debug(pformat(grads_Dy))
+
+    def _grads_fn(grads, opt, model, model_name):
+        if step % 10 == 0:
             grads_and_vars = zip(grads, model.trainable_variables)
-            _summary_grads(grads_and_vars)
+            _summary_grads(grads_and_vars, step, model_name)
         opt.apply_gradients(zip(grads, model.trainable_variables))
 
-    _grads_fn(grads_G, G, opt_G)
-    _grads_fn(grads_F, F, opt_F)
-    _grads_fn(grads_Dx, Dx, opt_Dx)
-    _grads_fn(grads_Dy, Dy, opt_Dy)
+    _grads_fn(grads_G, opt_G, G, 'G')
+    _grads_fn(grads_F, opt_F, F, 'F')
+    _grads_fn(grads_Dx, opt_Dx, Dx, 'Dx')
+    _grads_fn(grads_Dy, opt_Dy, Dy, 'Dy')
 
     return (x, y), (x_generated, y_generated), (_loss_cycle_x, _loss_cycle_y), \
            (_loss_gan_x, _loss_gan_y), (l_cycle, l_gan)
@@ -305,7 +329,7 @@ def train():
             losses = (loss_cycle, loss_gan, loss)
             content = (orig, pred)
 
-            if int(ckpt_G.step) % 50 == 0:
+            if int(ckpt_G.step) % save_step == 0:
                 _summary_losses(losses, step)
                 _summary_content(content, step)
 
@@ -375,3 +399,4 @@ if args.infer:
 #
 # else:
 #     train()
+train()
