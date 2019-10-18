@@ -72,11 +72,11 @@ def read_list(data, max_sec, hub=None):
 
 class DataLoader:
 
-    def __init__(self, config, data):
+    def __init__(self, config, data_dir):
         logging.info(f'DataLoader initializing')
         self.config = load_config(config)
 
-        self.data = data  # data dir
+        self.data = data_dir  # data_dir dir
 
         # dataset list<str>
         self.data_lab_train = None
@@ -85,7 +85,7 @@ class DataLoader:
         self.data_hub_valid = None
 
         # configuration json
-        self.n_max = None  # 데이터 수 제
+        self.n_max = None  # 데이터 수 제한
         self.n_fft = None  # STFT N_FFT
         self.hop_length = None  # STFT frame length
         self.window = None  # STFT window function name

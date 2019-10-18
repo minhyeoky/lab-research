@@ -22,6 +22,4 @@ xlrd >= 1.0.0
 # 시각화
 seaborn == 0.9.0
 
-keras_bert == 0.80.0
-
 jupyter == 1.0.0

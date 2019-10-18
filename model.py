@@ -34,8 +34,9 @@ class Generator(keras.models.Model):
         super(Generator, self).__init__(**kwargs)
         self.config = load_config(config)
 
-        self.act_fn = keras.layers.LeakyReLU()
-        self.kernel_size = self.config['kernel_size']
+        self.alpha = 0.2
+        self.act_fn = keras.layers.LeakyReLU(alpha=self.alpha)
+        self.kernel_size = 4
 
         self.conv = [
             Conv2D(filters=32, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
