@@ -19,7 +19,7 @@ logger = logging.getLogger()
 logger.setLevel("DEBUG")
 
 
-def read_list(data, max_sec, hub=None, example=False):
+def read_list(data, max_sec, hub=None):
     file_list = []
 
     file_path = os.path.join(data, 'soundAttGAN/koreancorpus_prep.xlsx')
@@ -39,8 +39,6 @@ def read_list(data, max_sec, hub=None, example=False):
                     "filename": filename,
                     "label": "hub"
                 })
-            if example:
-                break
 
     else:
         logging.info(f'reading lab data from {data_path} & {file_path}')
@@ -103,10 +101,6 @@ class DataLoader:
         self.sr = 16000
 
         self._build()
-
-    # @property
-    # def mel_shape(self):
-    #     return self.n_mels, self.n_cnns * self.n_mels
 
     @property
     def stft_shape(self):
@@ -229,7 +223,7 @@ class DataLoader:
                             win_length=self.win_length)
 
     def _trunc_audio(self, y):
-        _y = y[0:self.sr * self.max_sec]
+        _y = y[0:self.sr * self.max_sec - 1]  # stft output 크기 맞추기 위해 -1
         return _y
 
     def _pad_audio(self, y):
@@ -284,7 +278,3 @@ class DataLoader:
             pass
 
         return y, sr
-
-
-if __name__ == "__main__":
-    dl = DataLoader()
