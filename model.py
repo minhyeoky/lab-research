@@ -8,6 +8,7 @@ Conv2D = keras.layers.Conv2D
 DConv = keras.layers.Conv2DTranspose
 Dense = keras.layers.Dense
 Dropout = keras.layers.Dropout
+ZeroPadding2D = keras.layers.ZeroPadding2D
 
 
 def _get_embedding_table(checkpoint_file):
@@ -29,20 +30,15 @@ class Generator(keras.models.Model):
     def compute_output_signature(self, input_signature):
         pass
 
-    def __init__(self, config, checkpoint_file, input_shape, **kwargs):
+    def __init__(self, config, **kwargs):
         super(Generator, self).__init__(**kwargs)
         self.config = load_config(config)
-        self.audio_shape = input_shape
 
         self.act_fn = keras.layers.LeakyReLU()
         self.kernel_size = self.config['kernel_size']
-        self.max_len = self.config['max_len']
-
-        self.embedding_table = _get_embedding_table(checkpoint_file)
 
         self.conv = [
-            Conv2D(filters=32, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None,
-                   input_shape=input_shape),
+            Conv2D(filters=32, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
             Conv2D(filters=64, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
@@ -80,110 +76,104 @@ class Generator(keras.models.Model):
             DConv(filters=1, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             keras.layers.ReLU(max_value=80.0)
         ]
-        self.embed_hidden = Dense(units=self.hidden_size[0] * self.hidden_size[1])
 
     @tf.function
     def call(self, inputs, **kwargs):
-        audio, text, _ = inputs
+        audio = inputs
         audio = tf.expand_dims(audio, -1)
 
         for layer in self.conv:
             audio = layer(audio)
 
-        audio = self._concat_text(audio, text)
         for layer in self.dconv:
             audio = layer(audio)
         audio = tf.squeeze(audio, axis=-1)
 
         return audio
 
-    @property
-    def hidden_size(self):
-        return int(self.audio_shape[0] / 2 ** 5), int(self.audio_shape[1] / 2 ** 5)
-
-    def _concat_text(self, audio, text):
-        text = tf.gather(self.embedding_table, text)
-        text = self.embed_hidden(text)
-        text = tf.reshape(text, shape=[-1, self.max_len, *self.hidden_size])
-        text = tf.transpose(text, perm=[0, 2, 3, 1])
-        audio = tf.concat([audio, text], axis=-1)
-        return audio
-
 
 class Discriminator(keras.models.Model):
+
     def compute_output_signature(self, input_signature):
         pass
 
-    def __init__(self, config, input_shape, checkpoint_file, **kwargs):
+    def __init__(self, config, **kwargs):
         super(Discriminator, self).__init__(**kwargs)
         self.config = load_config(config)
-        self.audio_shape = input_shape
 
-        self.rate = self.config['dropout_rate']
-        self.alpha = 0.3
-        self.kernel_size = self.config['kernel_size']
-        self.max_len = self.config['max_len']
-        self.batch_size = self.config['batch_size']
-
+        self.kernel_size = 4
+        self.alpha = 0.2
         self.act_fn = keras.layers.LeakyReLU(alpha=self.alpha)
-        self.embedding_table = _get_embedding_table(checkpoint_file)
 
         self.conv = [
+            # (256, 128, 1) input image
             Conv2D(filters=32, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            Dropout(rate=self.rate),
+            BatchNorm(),
             self.act_fn,
+            # (128, 64, 32)
             Conv2D(filters=64, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            Dropout(rate=self.rate),
+            BatchNorm(),
             self.act_fn,
+            # (64, 32, 64)
             Conv2D(filters=128, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            Dropout(rate=self.rate),
+            BatchNorm(),
             self.act_fn,
-            Conv2D(filters=256, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            Dropout(rate=self.rate),
+            # (32, 16, 128)
+            ZeroPadding2D(),
+            # (34, 18, 128)
+            Conv2D(filters=256, kernel_size=self.kernel_size, padding='valid', strides=(1, 1), activation=None),
+            BatchNorm(),
             self.act_fn,
-            Conv2D(filters=512, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            Dropout(rate=self.rate),
-            self.act_fn,
-            keras.layers.Flatten()
-        ]
-        self.prob = [
-            Dense(units=512, activation=None),
-            Dropout(rate=self.rate),
-            self.act_fn,
-            Dense(units=1, activation=None),
+            # (31, 15, 256)
+            ZeroPadding2D(),
+            # (33, 17, 256)
+            Conv2D(filters=1, kernel_size=self.kernel_size, padding='valid', strides=(1, 1), activation=None),
+            # (30, 14, 1)
             keras.layers.Activation('sigmoid')
         ]
 
-        # self.cls = [
-        #     Dense(units=)
-        # ]
-        self.embed_hidden = Dense(units=self.hidden_size[0] * self.hidden_size[1])
-
     @tf.function
     def call(self, inputs, **kwargs):
-        audio, text = inputs
-        audio = tf.expand_dims(audio, -1)
+        orig, tar = inputs
+        orig = tf.expand_dims(orig, -1)
+        tar = tf.expand_dims(tar, -1)
+        x = keras.layers.concatenate([orig, tar])
+        # print(x.shape)
 
         for layer in self.conv:
-            audio = layer(audio)
+            x = layer(x)
+            # print(x.shape)
 
-        audio = self._concat_text(audio, text)
+        return x  # (30, 7 * max_sec, 1)
 
 
-        for layer in self.prob:
-            audio = layer(audio)
+class InstanceNormalization(tf.keras.layers.Layer):
+    """Instance Normalization Layer (https://arxiv.org/abs/1607.08022).
+    https://github.com/tensorflow/examples/blob/master/tensorflow_examples/models/pix2pix/pix2pix.py
+    """
 
-        prob = audio
-        return prob
+    def compute_output_signature(self, input_signature):
+        pass
 
-    @property
-    def hidden_size(self):
-        return int(self.audio_shape[0] / 2 ** 5), int(self.audio_shape[1] / 2 ** 5)
+    def __init__(self, epsilon=1e-5):
+        super(InstanceNormalization, self).__init__()
+        self.epsilon = epsilon
 
-    def _concat_text(self, audio, text):
-        text = tf.gather(self.embedding_table, text)
-        text = self.embed_hidden(text)
-        text = tf.reshape(text, shape=[-1, self.max_len * self.hidden_size[0] * self.hidden_size[1]])
-        #         text = tf.transpose(text, perm=[0, 2, 3, 1])
-        audio = tf.concat([audio, text], axis=-1)
-        return audio
+    def build(self, input_shape):
+        self.scale = self.add_weight(
+            name='scale',
+            shape=input_shape[-1:],
+            initializer=tf.random_normal_initializer(1., 0.02),
+            trainable=True)
+
+        self.offset = self.add_weight(
+            name='offset',
+            shape=input_shape[-1:],
+            initializer='zeros',
+            trainable=True)
+
+    def call(self, x):
+        mean, variance = tf.nn.moments(x, axes=[1, 2], keepdims=True)
+        inv = tf.math.rsqrt(variance + self.epsilon)
+        normalized = (x - mean) * inv
+        return self.scale * normalized + self.offset
