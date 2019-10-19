@@ -109,15 +109,18 @@ class Discriminator(keras.models.Model):
         self.conv = [
             # (256, 128, 1) input image
             Conv2D(filters=32, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            BatchNorm(),
+            # BatchNorm(),
+            Dropout(0.5),
             self.act_fn,
             # (128, 64, 32)
             Conv2D(filters=64, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
             BatchNorm(),
+            Dropout(0.5),
             self.act_fn,
             # (64, 32, 64)
             Conv2D(filters=128, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            BatchNorm(),
+            # BatchNorm(),
+            Dropout(0.5),
             self.act_fn,
             # (32, 16, 128)
             ZeroPadding2D(),

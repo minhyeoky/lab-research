@@ -83,7 +83,7 @@ writer_train = tf.summary.create_file_writer(log_dir)
 
 
 # Losses
-def L_GAN(orig, pred):
+def L_GAN(orig, pred, label_smoothing=0.0):
     """Binary cross entropy loss"""
     orig = tf.squeeze(orig)
     pred = tf.squeeze(pred)
@@ -91,9 +91,8 @@ def L_GAN(orig, pred):
     orig = tf.reduce_mean(orig, axis=-1)
     pred = tf.reduce_mean(pred, axis=-1)
     pred = tf.reduce_mean(pred, axis=-1)
-    logging.debug(f'orig: {orig}')
-    loss = keras.losses.binary_crossentropy(y_true=tf.ones_like(orig), y_pred=orig)
-    loss += keras.losses.binary_crossentropy(y_true=tf.zeros_like(pred), y_pred=pred)
+    loss = keras.losses.binary_crossentropy(y_true=tf.ones_like(orig), y_pred=orig, label_smoothing=label_smoothing)
+    loss += keras.losses.binary_crossentropy(y_true=tf.zeros_like(pred), y_pred=pred, label_smoothing=label_smoothing)
     loss = tf.reduce_mean(loss)
     return loss
 
@@ -243,17 +242,18 @@ def train_step(x_train, step):
         _loss_cycle_x = L_cycle(x, x_restored)
         _loss_cycle_y = L_cycle(y, y_restored)
 
-        _loss_gan_x = L_GAN(probs_x, probs_x_generated)
-        _loss_gan_y = L_GAN(probs_y, probs_y_generated)
+        _loss_gan_x = L_GAN(probs_x, probs_x_generated, label_smoothing=0.2)
+        _loss_gan_y = L_GAN(probs_y, probs_y_generated, label_smoothing=0.2)
 
         l_cycle = (_loss_cycle_x + _loss_cycle_y) * weight_cycle
         l_gan = _loss_gan_x + _loss_gan_y
+        l_gan_penalty = l_gan * 0.5
         loss = l_gan + l_cycle
 
     grads_G = tape_G.gradient(loss, G.trainable_variables)
     grads_F = tape_F.gradient(loss, F.trainable_variables)
-    grads_Dx = tape_Dx.gradient(l_gan, Dx.trainable_variables)
-    grads_Dy = tape_Dy.gradient(l_gan, Dy.trainable_variables)
+    grads_Dx = tape_Dx.gradient(l_gan_penalty, Dx.trainable_variables)
+    grads_Dy = tape_Dy.gradient(l_gan_penalty, Dy.trainable_variables)
 
     logging.debug(pformat(grads_G))
     logging.debug(pformat(grads_F))
