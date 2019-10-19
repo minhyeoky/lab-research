@@ -73,7 +73,8 @@ dataset_kor = tf.data.Dataset.from_generator(partial(dl.generator, data_type='hu
                                              output_types=tf.float32,
                                              output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
 
-dataset_train = tf.data.Dataset.zip((dataset_fgn, dataset_kor)).batch(batch_size).prefetch(tf.data.experimental.AUTOTUNE)  # x [0] => 외국인 / y [1] => 한국인
+dataset_train = tf.data.Dataset.zip((dataset_fgn, dataset_kor)).batch(batch_size).prefetch(
+    tf.data.experimental.AUTOTUNE)  # x [0] => 외국인 / y [1] => 한국인
 
 # Write config.json
 with open(f'{output_dir}/config.json', mode='w', encoding='utf8') as f:
@@ -83,16 +84,17 @@ writer_train = tf.summary.create_file_writer(log_dir)
 
 
 # Losses
-def L_GAN(orig, pred, label_smoothing=0.0):
+def L_GAN(y_true, y_pred, label_smoothing=0.0):
     """Binary cross entropy loss"""
-    orig = tf.squeeze(orig)
-    pred = tf.squeeze(pred)
-    orig = tf.reduce_mean(orig, axis=-1)
-    orig = tf.reduce_mean(orig, axis=-1)
-    pred = tf.reduce_mean(pred, axis=-1)
-    pred = tf.reduce_mean(pred, axis=-1)
-    loss = keras.losses.binary_crossentropy(y_true=tf.ones_like(orig), y_pred=orig, label_smoothing=label_smoothing)
-    loss += keras.losses.binary_crossentropy(y_true=tf.zeros_like(pred), y_pred=pred, label_smoothing=label_smoothing)
+    y_true = tf.squeeze(y_true)
+    y_pred = tf.squeeze(y_pred)
+    y_true = tf.reduce_mean(y_true, axis=-1)
+    y_true = tf.reduce_mean(y_true, axis=-1)
+    y_pred = tf.reduce_mean(y_pred, axis=-1)
+    y_pred = tf.reduce_mean(y_pred, axis=-1)
+    loss = keras.losses.binary_crossentropy(y_true=tf.ones_like(y_true), y_pred=y_true, label_smoothing=label_smoothing)
+    loss += keras.losses.binary_crossentropy(y_true=tf.zeros_like(y_pred), y_pred=y_pred,
+                                             label_smoothing=label_smoothing)
     loss = tf.reduce_mean(loss)
     return loss
 
@@ -198,25 +200,22 @@ def _summary_content(content, step):
 
 def _summary_losses(losses, step):
     logging.debug(f'_summary_losses-losses: {losses}')
-    loss_cycle, loss_gan, loss = losses
+    loss_GF, loss_D, total_loss = losses
     with writer_train.as_default():
-        tf.summary.scalar(name='loss_cycle-x',
-                          data=loss_cycle[0],
+        tf.summary.scalar(name='loss_G',
+                          data=loss_GF[0],
                           step=step)
-        tf.summary.scalar(name='loss_cycle-y',
-                          data=loss_cycle[1],
+        tf.summary.scalar(name='loss_F',
+                          data=loss_GF[1],
                           step=step)
-        tf.summary.scalar(name='loss_gan-x',
-                          data=loss_gan[0],
+        tf.summary.scalar(name='loss_Dx',
+                          data=loss_D[0],
                           step=step)
-        tf.summary.scalar(name='loss_gan-y',
-                          data=loss_gan[1],
+        tf.summary.scalar(name='loss_Dy',
+                          data=loss_D[1],
                           step=step)
-        tf.summary.scalar(name='loss_cycle',
-                          data=loss[0],
-                          step=step)
-        tf.summary.scalar(name='loss_gan',
-                          data=loss[1],
+        tf.summary.scalar(name='total-loss',
+                          data=total_loss,
                           step=step)
 
 
@@ -237,23 +236,29 @@ def train_step(x_train, step):
         probs_x_generated = Dx(inputs=(x, x_generated))
         probs_y_generated = Dy(inputs=(y, y_generated))
 
-        logging.debug(f'probs_x: {pformat(probs_x)}')
+        # loss_G = loss_G_cyc + loss_GAN_Dy
+        loss_G_cyc = L_cycle(x, x_restored) + L_cycle(y, y_restored)
+        loss_G_cyc *= weight_cycle
+        loss_GAN_Dy = L_GAN(probs_y, probs_y_generated, label_smoothing=0.1)
+        loss_G = loss_G_cyc + loss_GAN_Dy
 
-        _loss_cycle_x = L_cycle(x, x_restored)
-        _loss_cycle_y = L_cycle(y, y_restored)
+        # loss_F = loss_F_cyc + loss_GAN_Dx
+        loss_F_cyc = loss_G_cyc
+        loss_GAN_Dx = L_GAN(probs_x, probs_x_generated, label_smoothing=0.1)
+        loss_F = loss_F_cyc + loss_GAN_Dx
 
-        _loss_gan_x = L_GAN(probs_x, probs_x_generated, label_smoothing=0.2)
-        _loss_gan_y = L_GAN(probs_y, probs_y_generated, label_smoothing=0.2)
+        # loss_Dx = loss_GAN_Dx
+        loss_Dx = loss_GAN_Dx
+        # loss_Dy = loss_GAN_Dy
+        loss_Dy = loss_GAN_Dy
 
-        l_cycle = (_loss_cycle_x + _loss_cycle_y) * weight_cycle
-        l_gan = _loss_gan_x + _loss_gan_y
-        l_gan_penalty = l_gan * 0.5
-        loss = l_gan + l_cycle
+        # total_loss
+        total_loss = loss_G + loss_F + loss_Dx + loss_Dy
 
-    grads_G = tape_G.gradient(loss, G.trainable_variables)
-    grads_F = tape_F.gradient(loss, F.trainable_variables)
-    grads_Dx = tape_Dx.gradient(l_gan_penalty, Dx.trainable_variables)
-    grads_Dy = tape_Dy.gradient(l_gan_penalty, Dy.trainable_variables)
+    grads_G = tape_G.gradient(loss_G, G.trainable_variables)
+    grads_F = tape_F.gradient(loss_F, F.trainable_variables)
+    grads_Dx = tape_Dx.gradient(loss_Dx, Dx.trainable_variables)
+    grads_Dy = tape_Dy.gradient(loss_Dy, Dy.trainable_variables)
 
     logging.debug(pformat(grads_G))
     logging.debug(pformat(grads_F))
@@ -271,8 +276,8 @@ def train_step(x_train, step):
     _grads_fn(grads_Dx, opt_Dx, Dx, 'Dx')
     _grads_fn(grads_Dy, opt_Dy, Dy, 'Dy')
 
-    return (x, y), (x_generated, y_generated), (_loss_cycle_x, _loss_cycle_y), \
-           (_loss_gan_x, _loss_gan_y), (l_cycle, l_gan)
+    return (x, y), (x_generated, y_generated), (loss_G, loss_F), \
+           (loss_Dx, loss_Dy), total_loss
     # return pred, (_loss_g, _loss_d, _loss_l1)
 
 
@@ -321,12 +326,13 @@ else:
 
 def train():
     for epoch in range(epochs):
+        logging.info(f'epoch: {epoch}')
 
-        # start = time()
         for x_train in dataset_train:
+            start = time()
             step = ckpt_G.step
-            orig, pred, loss_cycle, loss_gan, loss = train_step(x_train, ckpt_G.step)
-            losses = (loss_cycle, loss_gan, loss)
+            orig, pred, loss_GF, loss_D, total_loss = train_step(x_train, ckpt_G.step)
+            losses = (loss_GF, loss_D, total_loss)
             content = (orig, pred)
 
             if int(ckpt_G.step) % save_step == 0:
@@ -342,14 +348,17 @@ def train():
                 _save(manager_F)
                 _save(manager_Dx)
                 _save(manager_Dy)
-
-            logging.info(f'Loss_cycle {loss[0].numpy()}, Loss_gan: {loss[1].numpy()}')
+            end = time()
+            logging.info(f"""Train step:{int(step)}, sec: {end - start:0.2f}
+            Total Loss: {total_loss.numpy()}
+            Generators: G: {loss_GF[0].numpy()},F: {loss_GF[1].numpy()}
+            Discriminator: Dx: {loss_D[0].numpy()},Dy: {loss_D[1].numpy()}
+            =================================================""")
             ckpt_G.step.assign_add(1)
             ckpt_F.step.assign_add(1)
             ckpt_Dx.step.assign_add(1)
             ckpt_Dy.step.assign_add(1)
 
-        # end = time()
         # with writer_train.as_default():
         #
         #     tf.summary.scalar(name='run_time', data=(end - start) / n_steps_per_epoch, step=step,

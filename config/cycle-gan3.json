@@ -12,5 +12,5 @@
   "kernel_size": 4,
   "fmax": 8000,
   "n_valid": 0,
-  "weight_cycle": 100.0
+  "weight_cycle": 1.0
 }
