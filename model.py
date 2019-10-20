@@ -37,46 +37,53 @@ class Generator(keras.models.Model):
         self.alpha = 0.2
         self.act_fn = keras.layers.LeakyReLU(alpha=self.alpha)
         self.kernel_size = 4
+        self.skip_connection = 1
 
         self.conv = [
+            # (128, 64, 32)
             Conv2D(filters=32, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
+            # (64, 32, 64)
             Conv2D(filters=64, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
+            # (32, 16, 128)
             Conv2D(filters=128, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
+            # (16, 8, 256)
             Conv2D(filters=256, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
+            # (8, 4, 512)
             Conv2D(filters=512, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn
         ]
 
         self.dconv = [
-            # 16
+            # (16, 8, 512)
             DConv(filters=512, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
-            # 32
+            # (32, 16, 256)
             DConv(filters=256, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
-            # 64
+            # (64, 32, 128)
             DConv(filters=128, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
-
+            # (128, 64, 64)
             DConv(filters=64, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             BatchNorm(),
             self.act_fn,
-
+            # (256, 128, 1)
             DConv(filters=1, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
             keras.layers.ReLU(max_value=80.0)
         ]
+        self.zs = []
 
     @tf.function
     def call(self, inputs, **kwargs):
@@ -85,9 +92,12 @@ class Generator(keras.models.Model):
 
         for layer in self.conv:
             audio = layer(audio)
+            self.zs.append(audio)
 
-        for layer in self.dconv:
+        for idx, layer in enumerate(self.dconv):
             audio = layer(audio)
+            if idx < self.skip_connection:
+                audio = tf.concat([audio, self.zs[-4-idx*4]], axis=-1)
         audio = tf.squeeze(audio, axis=-1)
 
         return audio

@@ -1,0 +1,16 @@
+{
+  "hop_length": 250,
+  "n_fft": 510,
+  "window": "hann",
+  "win_length": 510,
+  "max_sec": 2,
+  "top_db": 80.0,
+  "batch_size": 16,
+  "n_max": 10,
+  "epochs": 1000,
+  "learning_rate": 0.0002,
+  "kernel_size": 4,
+  "fmax": 8000,
+  "n_valid": 0,
+  "weight_cycle": 10.0
+}
