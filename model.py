@@ -148,16 +148,11 @@ class Discriminator(keras.models.Model):
 
     @tf.function
     def call(self, inputs, **kwargs):
-        orig, tar = inputs
+        x = inputs
 
-        orig = tf.expand_dims(orig, -1)
-        tar = tf.expand_dims(tar, -1)
-        x = keras.layers.concatenate([orig, tar])
-        # print(x.shape)
-
+        x = tf.expand_dims(x, -1)
         for layer in self.conv:
             x = layer(x)
-            # print(x.shape)
 
         return x  # (30, 7 * max_sec, 1)
 

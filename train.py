@@ -231,10 +231,10 @@ def train_step(x_train, step):
         y_restored = G(inputs=x_generated)
         x_restored = F(inputs=y_generated)
 
-        probs_x = Dx(inputs=(x, x))
-        probs_y = Dy(inputs=(y, y))
-        probs_x_generated = Dx(inputs=(x, x_generated))
-        probs_y_generated = Dy(inputs=(y, y_generated))
+        probs_x = Dx(inputs=x)
+        probs_y = Dy(inputs=y)
+        probs_x_generated = Dx(inputs=x_generated)
+        probs_y_generated = Dy(inputs=y_generated)
 
         probs_x = _average_patch_gan(probs_x)
         probs_y = _average_patch_gan(probs_y)
@@ -254,9 +254,9 @@ def train_step(x_train, step):
         loss_GAN_Dx = keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_y_generated), y_pred=probs_y_generated)
         loss_F = loss_F_cyc + loss_GAN_Dx
 
-        # loss_Dx = loss_GAN_Dx with label smoothing
+        # loss_Dx
         loss_Dx = L_GAN(probs_x, probs_x_generated, label_smoothing=0.1)
-        # loss_Dy = loss_GAN_Dy with label smoothing
+        # loss_Dy
         loss_Dy = L_GAN(probs_y, probs_y_generated, label_smoothing=0.1)
 
         # total_loss
