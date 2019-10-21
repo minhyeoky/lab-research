@@ -6,11 +6,12 @@
   "max_sec": 2,
   "top_db": 80.0,
   "batch_size": 16,
-  "n_max": 10,
+  "n_max": 50,
   "epochs": 1000,
   "learning_rate": 0.0002,
   "kernel_size": 4,
   "fmax": 8000,
   "n_valid": 0,
-  "weight_cycle": 10.0
+  "weight_cycle": 1.0,
+  "n_shortcut": 1
 }

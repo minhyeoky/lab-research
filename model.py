@@ -37,7 +37,7 @@ class Generator(keras.models.Model):
         self.alpha = 0.2
         self.act_fn = keras.layers.LeakyReLU(alpha=self.alpha)
         self.kernel_size = 4
-        self.skip_connection = 1
+        self.n_shortcut = self.config['n_shortcut']
 
         self.conv = [
             # (128, 64, 32)
@@ -96,8 +96,8 @@ class Generator(keras.models.Model):
 
         for idx, layer in enumerate(self.dconv):
             audio = layer(audio)
-            if idx < self.skip_connection:
-                audio = tf.concat([audio, self.zs[-4-idx*4]], axis=-1)
+            if (idx % 3 == 2) and ((idx // 3) < self.n_shortcut):
+                audio = tf.concat([audio, self.zs[-4]], axis=-1)  # TODO n_shortcut 증가 시 코드 짤 것
         audio = tf.squeeze(audio, axis=-1)
 
         return audio

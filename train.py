@@ -86,12 +86,6 @@ writer_train = tf.summary.create_file_writer(log_dir)
 # Losses
 def L_GAN(y_true, y_pred, label_smoothing=0.0):
     """Binary cross entropy loss"""
-    y_true = tf.squeeze(y_true)
-    y_pred = tf.squeeze(y_pred)
-    y_true = tf.reduce_mean(y_true, axis=-1)
-    y_true = tf.reduce_mean(y_true, axis=-1)
-    y_pred = tf.reduce_mean(y_pred, axis=-1)
-    y_pred = tf.reduce_mean(y_pred, axis=-1)
     loss = keras.losses.binary_crossentropy(y_true=tf.ones_like(y_true), y_pred=y_true, label_smoothing=label_smoothing)
     loss += keras.losses.binary_crossentropy(y_true=tf.zeros_like(y_pred), y_pred=y_pred,
                                              label_smoothing=label_smoothing)
@@ -221,6 +215,12 @@ def _summary_losses(losses, step):
 
 @tf.function
 def train_step(x_train, step):
+    def _average_patch_gan(probs):
+        probs = tf.squeeze(probs)
+        probs = tf.reduce_mean(probs, aixs=-1)
+        probs = tf.reduce_mean(probs, aixs=-1)
+        return probs
+
     with tf.GradientTape() as tape_G, tf.GradientTape() as tape_F, \
             tf.GradientTape() as tape_Dx, tf.GradientTape() as tape_Dy:
         x = x_train[0]
@@ -236,21 +236,28 @@ def train_step(x_train, step):
         probs_x_generated = Dx(inputs=(x, x_generated))
         probs_y_generated = Dy(inputs=(y, y_generated))
 
+        probs_x = _average_patch_gan(probs_x)
+        probs_y = _average_patch_gan(probs_y)
+        probs_x_generated = _average_patch_gan(probs_x_generated)
+        probs_y_generated = _average_patch_gan(probs_y_generated)
+
         # loss_G = loss_G_cyc + loss_GAN_Dy
         loss_G_cyc = L_cycle(x, x_restored) + L_cycle(y, y_restored)
         loss_G_cyc *= weight_cycle
-        loss_GAN_Dy = L_GAN(probs_y, probs_y_generated, label_smoothing=0.1)
+        # minimizing -log Dy(G(z))
+        loss_GAN_Dy = keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_x_generated), y_pred=probs_x_generated)
         loss_G = loss_G_cyc + loss_GAN_Dy
 
         # loss_F = loss_F_cyc + loss_GAN_Dx
         loss_F_cyc = loss_G_cyc
-        loss_GAN_Dx = L_GAN(probs_x, probs_x_generated, label_smoothing=0.1)
+        # minimizing -log(Dx(F(z))
+        loss_GAN_Dx = keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_y_generated), y_pred=probs_y_generated)
         loss_F = loss_F_cyc + loss_GAN_Dx
 
-        # loss_Dx = loss_GAN_Dx
-        loss_Dx = loss_GAN_Dx
-        # loss_Dy = loss_GAN_Dy
-        loss_Dy = loss_GAN_Dy
+        # loss_Dx = loss_GAN_Dx with label smoothing
+        loss_Dx = L_GAN(probs_x, probs_x_generated, label_smoothing=0.1)
+        # loss_Dy = loss_GAN_Dy with label smoothing
+        loss_Dy = L_GAN(probs_y, probs_y_generated, label_smoothing=0.1)
 
         # total_loss
         total_loss = loss_G + loss_F + loss_Dx + loss_Dy
