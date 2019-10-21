@@ -217,8 +217,8 @@ def _summary_losses(losses, step):
 def train_step(x_train, step):
     def _average_patch_gan(probs):
         probs = tf.squeeze(probs)
-        probs = tf.reduce_mean(probs, aixs=-1)
-        probs = tf.reduce_mean(probs, aixs=-1)
+        probs = tf.reduce_mean(probs, axis=-1)
+        probs = tf.reduce_mean(probs, axis=-1)
         return probs
 
     with tf.GradientTape() as tape_G, tf.GradientTape() as tape_F, \
