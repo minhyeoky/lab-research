@@ -310,10 +310,10 @@ ckpt_Dx = Checkpoint(step=tf.Variable(1, dtype=tf.int64), optimizer=opt_Dx, net=
 ckpt_Dy = Checkpoint(step=tf.Variable(1, dtype=tf.int64), optimizer=opt_Dy, net=Dy)
 
 CheckpointManager = tf.train.CheckpointManager
-manager_G = CheckpointManager(ckpt_G, f'{ckpt_dir}/G', max_to_keep=20)
-manager_F = CheckpointManager(ckpt_F, f'{ckpt_dir}/F', max_to_keep=20)
-manager_Dx = CheckpointManager(ckpt_Dx, f'{ckpt_dir}/Dx', max_to_keep=20)
-manager_Dy = CheckpointManager(ckpt_Dy, f'{ckpt_dir}/Dy', max_to_keep=20)
+manager_G = CheckpointManager(ckpt_G, f'{ckpt_dir}/G', max_to_keep=3)
+manager_F = CheckpointManager(ckpt_F, f'{ckpt_dir}/F', max_to_keep=3)
+manager_Dx = CheckpointManager(ckpt_Dx, f'{ckpt_dir}/Dx', max_to_keep=3)
+manager_Dy = CheckpointManager(ckpt_Dy, f'{ckpt_dir}/Dy', max_to_keep=3)
 
 # Restore Checkpoints
 ckpt_G.restore(manager_G.latest_checkpoint)

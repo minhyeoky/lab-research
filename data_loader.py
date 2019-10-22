@@ -19,16 +19,16 @@ logger = logging.getLogger()
 logger.setLevel("DEBUG")
 
 
-def read_list(data, max_sec, hub=None):
+def read_list(data, max_sec, hub=None, n_max=999999):
     file_list = []
 
     file_path = os.path.join(data, 'soundAttGAN/koreancorpus_prep.xlsx')
     data_path = os.path.join(data, 'soundAttGAN')
 
     if hub:
-        hub = os.path.join(data, 'KsponSpeech_01')
-        logging.info(f'reading hub data from {hub}')
-        p = Path(hub)
+        file = os.path.join(data, 'KsponSpeech_01')
+        logging.info(f'reading hub data from {file}')
+        p = Path(file)
         for each in p.iterdir():
             logging.debug(each)
             for wav in each.glob('*.wav'):
@@ -39,6 +39,9 @@ def read_list(data, max_sec, hub=None):
                     "filename": filename,
                     "label": "hub"
                 })
+            if len(file_list) > n_max:
+                break
+
 
     else:
         logging.info(f'reading lab data from {data_path} & {file_path}')
@@ -92,13 +95,13 @@ class DataLoader:
         self.fmax = None  # 최대 주파수
         self.max_sec = None  # 최대 오디오 길이
         self.win_length = None  # stft win_length
-        self.top_db = None  # 진폭/ 파워 데시벨 변환시 최대 데시벨
         self.n_valid = None  # 검증셋의 갯수
+        self.sr = None
+        self.augmentation = None
+        self.noise_factor = None
 
         self.__dict__ = {**self.__dict__,
                          **self.config}
-
-        self.sr = 16000
 
         self._build()
 
@@ -115,7 +118,7 @@ class DataLoader:
         return len(self.data_lab_train) + len(self.data_lab_valid)
 
     def _build(self):
-        data_hub = read_list(data=self.data, hub=True, max_sec=self.max_sec)
+        data_hub = read_list(data=self.data, hub=True, n_max=self.n_max, max_sec=self.max_sec)
         data_lab = read_list(data=self.data, max_sec=self.max_sec)
 
         data_hub = data_hub[:self.n_max]
@@ -180,23 +183,22 @@ class DataLoader:
 
         for each in files:
             file_name = each['filename']
-            label = each['label']
             _y, _sr = librosa.load(file_name, sr=self.sr)
-
-            if return_label:
-                raise NotImplementedError
-                if label == 'hub':
-                    yield 1
-                else:
-                    yield 0
-                continue
-
             _y = self._prep_audio(_y)
-
             yield _y
+
+    def _inject_noise(self, y):
+        if self.noise_factor == 0:
+            noise_factor = 0.01 * np.random.random_sample(1)
+        else:
+            noise_factor = self.noise_factor
+        y = y + np.random.randn(y.shape[0]) * noise_factor
+        return y
 
     def _prep_audio(self, y):
         y = self._trunc_audio(y)
+        if self.augmentation:
+            y = self._inject_noise(y)
         y = self._norm(y)
         y = self._stft(y)
         y = np.abs(y)
@@ -223,7 +225,13 @@ class DataLoader:
                             win_length=self.win_length)
 
     def _trunc_audio(self, y):
-        _y = y[0:self.sr * self.max_sec - 1]  # stft output 크기 맞추기 위해 -1
+        audio_len = y.shape[0]
+        trunc_len = self.sr * self.max_sec
+        if self.augmentation:
+            trunc_point = random.randint(trunc_len, audio_len) - 1
+        else:
+            trunc_point = trunc_len - 1
+        _y = y[trunc_point - (trunc_len - 1):trunc_point]
         return _y
 
     def _pad_audio(self, y):
@@ -258,23 +266,11 @@ class DataLoader:
             return fig
         plt.show()
 
-    def random_audio(self, path=None, mel_to_audio=False, specshow=True):
+    def random_audio(self, path=None):
 
-        raise NotImplementedError
         if path:
-            raise NotImplementedError
-            y, sr = librosa.load(path)
-
+            y, sr = librosa.load(path, sr=self.sr)
         else:
-            raise NotImplementedError
-            y, sr = librosa.load(random.choice(self.data_hub)['filename'], sr=self.config['sr_hub'])
-
-        if mel_to_audio:
-            y = self._melspectrogram(y)
-            self.specshow(y, mel=True)
-            y = self._mel_to_audio(y)
-        else:
-            #             self.specshow(y, mel=False)
-            pass
+            y, sr = librosa.load(random.choice(self.data_hub_train + self.data_lab_train)['filename'], sr=self.sr)
 
         return y, sr
