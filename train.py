@@ -236,22 +236,24 @@ def train_step(x_train, step):
         probs_x_generated = Dx(inputs=x_generated)
         probs_y_generated = Dy(inputs=y_generated)
 
-        probs_x = _average_patch_gan(probs_x)
-        probs_y = _average_patch_gan(probs_y)
-        probs_x_generated = _average_patch_gan(probs_x_generated)
-        probs_y_generated = _average_patch_gan(probs_y_generated)
+        # probs_x = _average_patch_gan(probs_x)
+        # probs_y = _average_patch_gan(probs_y)
+        # probs_x_generated = _average_patch_gan(probs_x_generated)
+        # probs_y_generated = _average_patch_gan(probs_y_generated)
 
         # loss_G = loss_G_cyc + loss_GAN_Dy
         loss_G_cyc = L_cycle(x, x_restored) + L_cycle(y, y_restored)
         loss_G_cyc *= weight_cycle
         # minimizing -log Dy(G(z))
-        loss_GAN_Dy = keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_x_generated), y_pred=probs_x_generated)
+        loss_GAN_Dy = tf.reduce_mean(
+            keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_x_generated), y_pred=probs_x_generated))
         loss_G = loss_G_cyc + loss_GAN_Dy
 
         # loss_F = loss_F_cyc + loss_GAN_Dx
         loss_F_cyc = loss_G_cyc
         # minimizing -log(Dx(F(z))
-        loss_GAN_Dx = keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_y_generated), y_pred=probs_y_generated)
+        loss_GAN_Dx = tf.reduce_mean(
+            keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_y_generated), y_pred=probs_y_generated))
         loss_F = loss_F_cyc + loss_GAN_Dx
 
         # loss_Dx

@@ -133,16 +133,23 @@ class Discriminator(keras.models.Model):
             # Dropout(0.5),
             self.act_fn,
             # (32, 16, 128)
-            ZeroPadding2D(),
-            # (34, 18, 128)
             Conv2D(filters=256, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
             BatchNorm(),
             self.act_fn,
-            # (17, 9, 256)
-            ZeroPadding2D(),
-            # (19, 11, 256)
-            Conv2D(filters=1, kernel_size=self.kernel_size, padding='valid', strides=(1, 1), activation=None),
-            # (16, 8, 1)
+            # (16, 8, 256)
+            Conv2D(filters=512, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
+            Dropout(0.5),
+            # BatchNorm(),
+            self.act_fn,
+            # (8, 4, 512)
+            keras.layers.Flatten(),
+            Dense(units=256, activation=None),
+            # keras.layers.Dropout(0.3),
+            self.act_fn,
+            Dense(units=1, activation=None),
+            # Conv2D(filters=1, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
+            # BatchNorm(),
+            # (4, 2, 1)
             keras.layers.Activation('sigmoid')
         ]
 
