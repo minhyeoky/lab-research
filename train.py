@@ -66,14 +66,14 @@ if not ckpt_dir.exists():
 
 # DataLoader
 dl: DataLoader = DataLoader(config=args.config, data_dir=args.data_dir)
-dataset_fgn = tf.data.Dataset.from_generator(partial(dl.generator, data_type='lab'),
-                                             output_types=tf.float32,
-                                             output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
-dataset_kor = tf.data.Dataset.from_generator(partial(dl.generator, data_type='hub'),
-                                             output_types=tf.float32,
-                                             output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
+dataset_a = tf.data.Dataset.from_generator(partial(dl.generator, data_type='a'),
+                                           output_types=tf.float32,
+                                           output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
+dataset_b = tf.data.Dataset.from_generator(partial(dl.generator, data_type='b'),
+                                           output_types=tf.float32,
+                                           output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
 
-dataset_train = tf.data.Dataset.zip((dataset_fgn, dataset_kor)).batch(batch_size).prefetch(
+dataset_train = tf.data.Dataset.zip((dataset_a, dataset_b)).batch(batch_size).prefetch(
     tf.data.experimental.AUTOTUNE)  # x [0] => 외국인 / y [1] => 한국인
 
 # Write config.json

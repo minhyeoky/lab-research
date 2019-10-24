@@ -19,58 +19,27 @@ logger = logging.getLogger()
 logger.setLevel("DEBUG")
 
 
-def read_list(data, max_sec, hub=None, n_max=999999):
-    file_list = []
+def read_list(data_dir, min_sec, n_max=999999):
+    data_dir_a = Path(os.path.join(str(data_dir), 'train_a'))
+    data_dir_b = Path(os.path.join(str(data_dir), 'train_b'))
 
-    file_path = os.path.join(data, 'soundAttGAN/koreancorpus_prep.xlsx')
-    data_path = os.path.join(data, 'soundAttGAN')
+    def _read_dir(dir: PosixPath):
+        ret = []
+        for each in dir.glob('*.wav'):
+            file_name = str(each)
+            if not DataLoader.check_sec(file_name, min_sec):
+                continue
+            else:
+                ret.append(file_name)
 
-    if hub:
-        file = os.path.join(data, 'KsponSpeech_01')
-        logging.info(f'reading hub data from {file}')
-        p = Path(file)
-        for each in p.iterdir():
-            logging.debug(each)
-            for wav in each.glob('*.wav'):
-                filename = str(wav)
-                if not DataLoader.check_sec(filename, max_sec):
-                    continue
-                file_list.append({
-                    "filename": filename,
-                    "label": "hub"
-                })
-            if len(file_list) > n_max:
+            if len(ret) == n_max:
                 break
+        print(ret)
+        return ret
 
-
-    else:
-        logging.info(f'reading lab data from {data_path} & {file_path}')
-
-        info_file = pd.read_excel(file_path, sheet_name="Sheet1")
-
-        def _append_to_file_list(row, file_list):
-            """data_path 읽어서 file_list 에 넣음,
-
-            :param row: 엑셀
-            :param file_list:
-            :return: None
-            """
-            filename = f"{data_path}/{int(row['fileName'])}_{int(row['suffix'])}.wav"
-
-            if not DataLoader.check_sec(filename, max_sec):
-                return
-            file_list.append({
-                "filename": filename,
-                "label": "lab"
-            })
-
-        info_file.apply(partial(_append_to_file_list, file_list=file_list), axis=1)
-
-    assert len(file_list) != 0
-
-    logging.info(f'total number of data: {len(file_list)}')
-
-    return file_list
+    data_a = _read_dir(data_dir_a)
+    data_b = _read_dir(data_dir_b)
+    return data_a, data_b
 
 
 class DataLoader:
@@ -79,23 +48,19 @@ class DataLoader:
         logging.info(f'DataLoader initializing')
         self.config = load_config(config)
 
-        self.data = data_dir  # data_dir dir
+        self.data_dir = data_dir  # data_dir dir
 
         # dataset list<str>
-        self.data_lab_train = None
-        self.data_lab_valid = None
-        self.data_hub_train = None
-        self.data_hub_valid = None
+        self.data_a = None
+        self.data_b = None
 
         # configuration json
         self.n_max = None  # 데이터 수 제한
         self.n_fft = None  # STFT N_FFT
         self.hop_length = None  # STFT frame length
         self.window = None  # STFT window function name
-        self.fmax = None  # 최대 주파수
-        self.max_sec = None  # 최대 오디오 길이
+        self.min_sec = None  # 최소 오디오 길이
         self.win_length = None  # stft win_length
-        self.n_valid = None  # 검증셋의 갯수
         self.sr = None
         self.augmentation = None
         self.noise_factor = None
@@ -107,27 +72,18 @@ class DataLoader:
 
     @property
     def stft_shape(self):
-        return (self.n_fft / 2) + 1, self.sr * self.max_sec / self.hop_length
+        return (self.n_fft / 2) + 1, self.sr * self.min_sec / self.hop_length
 
     @property
-    def n_hub(self):
-        return len(self.data_hub_train) + len(self.data_hub_valid)
+    def n_a(self):
+        return len(self.data_b)
 
     @property
-    def n_lab(self):
-        return len(self.data_lab_train) + len(self.data_lab_valid)
+    def n_b(self):
+        return len(self.data_a)
 
     def _build(self):
-        data_hub = read_list(data=self.data, hub=True, n_max=self.n_max, max_sec=self.max_sec)
-        data_lab = read_list(data=self.data, max_sec=self.max_sec)
-
-        data_hub = data_hub[:self.n_max]
-        data_lab = data_lab[:self.n_max]
-
-        self.data_lab_train = data_lab[self.n_valid:]
-        self.data_hub_train = data_hub[self.n_valid:]
-        self.data_lab_valid = data_lab[:self.n_valid]
-        self.data_hub_valid = data_hub[:self.n_valid]
+        self.data_a, self.data_b = read_list(data_dir=self.data_dir, n_max=self.n_max, min_sec=self.min_sec)
 
         self._validate_build()
 
@@ -135,8 +91,8 @@ class DataLoader:
         logging.info('== Dataloader paramters ==')
         logging.info(pformat(self.config))
         logging.info('== Number of dataset == ')
-        logging.info(f'= HUB: {self.n_hub}')
-        logging.info(f'= LAB: {self.n_lab}')
+        logging.info(f'= HUB: {self.n_a}')
+        logging.info(f'= LAB: {self.n_b}')
 
     def _validate_build(self):
         """할당되지 않은 변수가 있는 지 확인"""
@@ -145,13 +101,13 @@ class DataLoader:
                 raise ValueError(f'{key} is None')
 
     @staticmethod
-    def check_sec(filename, max_sec):
+    def check_sec(filename, min_sec):
         if not isinstance(filename, str):
             raise TypeError
 
         sec = librosa.get_duration(filename=filename)
 
-        if sec < max_sec:
+        if sec < min_sec:
             return False
         else:
             return True
@@ -163,27 +119,19 @@ class DataLoader:
         y = y * (1. / div)
         return y
 
-    def generator(self, data_type, valid=False, norm=True, return_label=False):
+    def generator(self, data_type):
         """audio Generator
 
         :return: y, sr
         """
-        if data_type == 'lab':
-            if valid:
-                files = self.data_lab_valid
-            else:
-                files = self.data_lab_train
-        elif data_type == 'hub':
-            if valid:
-                files = self.data_hub_valid
-            else:
-                files = self.data_hub_train
+        if data_type == 'a':
+            datas = self.data_a
+        elif data_type == 'b':
+            datas = self.data_b
         else:
             raise TypeError
-
-        for each in files:
-            file_name = each['filename']
-            _y, _sr = librosa.load(file_name, sr=self.sr)
+        for each in datas:
+            _y, _sr = librosa.load(each, sr=self.sr)
             _y = self._prep_audio(_y)
             yield _y
 
@@ -226,17 +174,14 @@ class DataLoader:
 
     def _trunc_audio(self, y):
         audio_len = y.shape[0]
-        trunc_len = self.sr * self.max_sec
-        if self.augmentation:
-            trunc_point = random.randint(trunc_len, audio_len) - 1
-        else:
-            trunc_point = trunc_len - 1
+        trunc_len = self.sr * self.min_sec
+        trunc_point = random.randint(trunc_len, audio_len) - 1
         _y = y[trunc_point - (trunc_len - 1):trunc_point]
         return _y
 
     def _pad_audio(self, y):
         raise NotImplementedError
-        _y = np.zeros(shape=[self.sr * self.max_sec - 1])
+        _y = np.zeros(shape=[self.sr * self.min_sec - 1])
         # **-1** - stft time axis shape 조절
         _y[0:y.shape[0]] = y
         return _y
@@ -254,7 +199,7 @@ class DataLoader:
         fig = plt.figure()
         y = librosa.amplitude_to_db(y, ref=np.max)
         axes = librosa.display.specshow(y, hop_length=self.config['hop_length'],
-                                        fmax=self.fmax,
+                                        fmax=8000,
                                         sr=self.sr,
                                         y_axis='linear',
                                         x_axis='time')
@@ -271,6 +216,6 @@ class DataLoader:
         if path:
             y, sr = librosa.load(path, sr=self.sr)
         else:
-            y, sr = librosa.load(random.choice(self.data_hub_train + self.data_lab_train)['filename'], sr=self.sr)
+            y, sr = librosa.load(random.choice(self.data_b + self.data_a)['filename'], sr=self.sr)
 
         return y, sr
