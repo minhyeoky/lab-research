@@ -4,6 +4,7 @@ from utils import *
 keras = tf.keras
 
 BatchNorm = keras.layers.BatchNormalization
+# InstanceNorm = InstanceNormalization
 Conv2D = keras.layers.Conv2D
 DConv = keras.layers.Conv2DTranspose
 Dense = keras.layers.Dense
@@ -36,13 +37,13 @@ class Generator(keras.models.Model):
 
         self.alpha = 0.2
         self.act_fn = keras.layers.LeakyReLU(alpha=self.alpha)
-        self.kernel_size = 4
+        self.kernel_size = self.config['kernel_size']
         self.n_shortcut = self.config['n_shortcut']
 
         self.conv = [
             # (128, 64, 32)
             Conv2D(filters=32, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
-            BatchNorm(),
+            # BatchNorm(),
             self.act_fn,
             # (64, 32, 64)
             Conv2D(filters=64, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
@@ -81,7 +82,6 @@ class Generator(keras.models.Model):
             self.act_fn,
             # (256, 128, 1)
             DConv(filters=1, kernel_size=self.kernel_size, strides=(2, 2), padding='same', activation=None),
-            keras.layers.ReLU(max_value=80.0)
         ]
         self.zs = []
 
@@ -96,8 +96,8 @@ class Generator(keras.models.Model):
 
         for idx, layer in enumerate(self.dconv):
             audio = layer(audio)
-            if (idx % 3 == 2) and ((idx // 3) < self.n_shortcut):
-                audio = tf.concat([audio, self.zs[-4]], axis=-1)  # TODO n_shortcut 증가 시 코드 짤 것
+            # if (idx % 3 == 2) and ((idx // 3) < self.n_shortcut):
+            #     audio = tf.concat([audio, self.zs[-4]], axis=-1)  # TODO n_shortcut 증가 시 코드 짤 것
         audio = tf.squeeze(audio, axis=-1)
 
         return audio
@@ -137,13 +137,13 @@ class Discriminator(keras.models.Model):
             BatchNorm(),
             self.act_fn,
             # (16, 8, 256)
-            Conv2D(filters=512, kernel_size=self.kernel_size, padding='same', strides=(2, 2), activation=None),
-            Dropout(0.5),
-            # BatchNorm(),
+            Conv2D(filters=512, kernel_size=self.kernel_size, padding='same', strides=(1, 1), activation=None),
+            BatchNorm(),
             self.act_fn,
             # (8, 4, 512)
             keras.layers.Flatten(),
             Dense(units=256, activation=None),
+            BatchNorm(),
             # keras.layers.Dropout(0.3),
             self.act_fn,
             Dense(units=1, activation=None),

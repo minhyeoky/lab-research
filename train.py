@@ -26,7 +26,7 @@ parser.add_argument('--output_dir', default='../data/experiment/output', type=st
 parser.add_argument('--infer', default=False, type=bool, required=False)
 parser.add_argument('--infer_audio', default='', type=str, required=False)
 parser.add_argument('--log_level', default='INFO', type=str, required=False)
-parser.add_argument('--save_step', default=100, type=int, required=False)
+parser.add_argument('--save_step', default=1000, type=int, required=False)
 args = parser.parse_args()
 
 logging.info(f'setting configuration from {args.config}')
@@ -39,10 +39,11 @@ n_max = config['n_max']
 learning_rate = config['learning_rate']
 epochs = config['epochs']
 weight_cycle = config['weight_cycle']
+y_axis = config['y_axis']
 output_dir = args.output_dir
 n_steps_per_epoch = n_max // batch_size
-save_step = 100  # TODO
-total_step = epochs * batch_size
+save_step = args.save_step  # TODO
+total_step = epochs * (n_max // batch_size)
 output_dir = Path(args.output_dir).joinpath(Path(args.config).name.strip('.json'))
 ckpt_dir = Path(f'{output_dir}/ckpt')
 log_dir = f'{output_dir}/tensorboard'
@@ -68,10 +69,10 @@ if not ckpt_dir.exists():
 dl: DataLoader = DataLoader(config=args.config, data_dir=args.data_dir)
 dataset_a = tf.data.Dataset.from_generator(partial(dl.generator, data_type='a'),
                                            output_types=tf.float32,
-                                           output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
+                                           output_shapes=dl.output_shape).shuffle(buffer_size=shuffle_buffer_size)
 dataset_b = tf.data.Dataset.from_generator(partial(dl.generator, data_type='b'),
                                            output_types=tf.float32,
-                                           output_shapes=dl.stft_shape).shuffle(buffer_size=shuffle_buffer_size)
+                                           output_shapes=dl.output_shape).shuffle(buffer_size=shuffle_buffer_size)
 
 dataset_train = tf.data.Dataset.zip((dataset_a, dataset_b)).batch(batch_size).prefetch(
     tf.data.experimental.AUTOTUNE)  # x [0] => 외국인 / y [1] => 한국인
@@ -111,7 +112,7 @@ def L_cycle(true, pred):
 # Postprocessing
 def _pred_to_img(x, infer=False, infer_audio=None):
     """Visualize STFT to spectrogram that is of decibel scale"""
-    fig = dl.specshow(x, return_figure=True, mel=False)
+    fig = dl.specshow(x, return_figure=True)
     if infer:
         fig.savefig(str(output_dir) + f'/{infer_audio}.png')
     else:
@@ -125,8 +126,7 @@ def _pred_to_img(x, infer=False, infer_audio=None):
 
 def _pred_to_audio(x):
     """Restore STFT img to wavefile using griffinlim algorithm"""
-    x = np.array(x)
-    x = librosa.griffinlim(x, hop_length=dl.hop_length, win_length=dl.win_length)
+    x = dl.post_audio(x)
     return x
 
 
@@ -228,13 +228,13 @@ def train_step(x_train, step):
         y_generated = G(inputs=x)
         x_generated = F(inputs=y)
 
-        y_restored = G(inputs=x_generated)
-        x_restored = F(inputs=y_generated)
-
-        probs_x = Dx(inputs=x)
-        probs_y = Dy(inputs=y)
-        probs_x_generated = Dx(inputs=x_generated)
-        probs_y_generated = Dy(inputs=y_generated)
+        # y_restored = G(inputs=x_generated)
+        # x_restored = F(inputs=y_generated)
+        #
+        # probs_x = Dx(inputs=x)
+        # probs_y = Dy(inputs=y)
+        # probs_x_generated = Dx(inputs=x_generated)
+        # probs_y_generated = Dy(inputs=y_generated)
 
         # probs_x = _average_patch_gan(probs_x)
         # probs_y = _average_patch_gan(probs_y)
@@ -242,37 +242,39 @@ def train_step(x_train, step):
         # probs_y_generated = _average_patch_gan(probs_y_generated)
 
         # loss_G = loss_G_cyc + loss_GAN_Dy
-        loss_G_cyc = L_cycle(x, x_restored) + L_cycle(y, y_restored)
+        # loss_G_cyc = L_cycle(x, x_restored) + L_cycle(y, y_restored)
+        loss_G_cyc = L_cycle(x, y_generated)
         loss_G_cyc *= weight_cycle
         # minimizing -log Dy(G(z))
-        loss_GAN_Dy = tf.reduce_mean(
-            keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_x_generated), y_pred=probs_x_generated))
+        loss_GAN_Dy = 0
+        # loss_GAN_Dy = tf.reduce_mean(keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_x_generated), y_pred=probs_x_generated))
         loss_G = loss_G_cyc + loss_GAN_Dy
 
-        # loss_F = loss_F_cyc + loss_GAN_Dx
+        loss_GAN_Dx = 0
+        # loss_GAN_Dx = tf.reduce_mean(keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_y_generated), y_pred=probs_y_generated))
         loss_F_cyc = loss_G_cyc
-        # minimizing -log(Dx(F(z))
-        loss_GAN_Dx = tf.reduce_mean(
-            keras.losses.binary_crossentropy(y_true=tf.ones_like(probs_y_generated), y_pred=probs_y_generated))
         loss_F = loss_F_cyc + loss_GAN_Dx
-
-        # loss_Dx
-        loss_Dx = L_GAN(probs_x, probs_x_generated, label_smoothing=0.1)
-        # loss_Dy
-        loss_Dy = L_GAN(probs_y, probs_y_generated, label_smoothing=0.1)
+        #
+        # # loss_Dx
+        loss_Dx = 0
+        # loss_Dx = L_GAN(probs_x, probs_x_generated, label_smoothing=0.1)
+        # # loss_Dy
+        loss_Dy = 0
+        # loss_Dy = L_GAN(probs_y, probs_y_generated, label_smoothing=0.1)
 
         # total_loss
         total_loss = loss_G + loss_F + loss_Dx + loss_Dy
 
     grads_G = tape_G.gradient(loss_G, G.trainable_variables)
-    grads_F = tape_F.gradient(loss_F, F.trainable_variables)
-    grads_Dx = tape_Dx.gradient(loss_Dx, Dx.trainable_variables)
-    grads_Dy = tape_Dy.gradient(loss_Dy, Dy.trainable_variables)
+    # grads_F = tape_F.gradient(loss_F, F.trainable_variables)
+    # grads_Dx = tape_Dx.gradient(loss_Dx, Dx.trainable_variables)
+    # grads_Dy = tape_Dy.gradient(loss_Dy, Dy.trainable_variables)
 
     logging.debug(pformat(grads_G))
-    logging.debug(pformat(grads_F))
-    logging.debug(pformat(grads_Dx))
-    logging.debug(pformat(grads_Dy))
+
+    # logging.debug(pformat(grads_F))
+    # logging.debug(pformat(grads_Dx))
+    # logging.debug(pformat(grads_Dy))
 
     def _grads_fn(grads, opt, model, model_name):
         if step % 10 == 0:
@@ -281,9 +283,9 @@ def train_step(x_train, step):
         opt.apply_gradients(zip(grads, model.trainable_variables))
 
     _grads_fn(grads_G, opt_G, G, 'G')
-    _grads_fn(grads_F, opt_F, F, 'F')
-    _grads_fn(grads_Dx, opt_Dx, Dx, 'Dx')
-    _grads_fn(grads_Dy, opt_Dy, Dy, 'Dy')
+    # _grads_fn(grads_F, opt_F, F, 'F')
+    # _grads_fn(grads_Dx, opt_Dx, Dx, 'Dx')
+    # _grads_fn(grads_Dy, opt_Dy, Dy, 'Dy')
 
     return (x, y), (x_generated, y_generated), (loss_G, loss_F), \
            (loss_Dx, loss_Dy), total_loss
@@ -344,8 +346,10 @@ def train():
             losses = (loss_GF, loss_D, total_loss)
             content = (orig, pred)
 
-            if int(ckpt_G.step) % save_step == 0:
+            if int(step) % 10 == 0:
                 _summary_losses(losses, step)
+
+            if int(step) % save_step == 0:
                 _summary_content(content, step)
 
             if step % save_step == 0:

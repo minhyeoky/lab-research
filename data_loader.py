@@ -34,7 +34,6 @@ def read_list(data_dir, min_sec, n_max=999999):
 
             if len(ret) == n_max:
                 break
-        print(ret)
         return ret
 
     data_a = _read_dir(data_dir_a)
@@ -64,6 +63,11 @@ class DataLoader:
         self.sr = None
         self.augmentation = None
         self.noise_factor = None
+        self.cut_audio = None
+        self.y_axis = None
+        self._mel_filter = None
+        self.fmax = None
+        self.power = None
 
         self.__dict__ = {**self.__dict__,
                          **self.config}
@@ -71,8 +75,11 @@ class DataLoader:
         self._build()
 
     @property
-    def stft_shape(self):
-        return (self.n_fft / 2) + 1, self.sr * self.min_sec / self.hop_length
+    def output_shape(self):
+        # stft: (1 + n_fft/2, n_frames)
+        # melscale: (n_mels, n_frames)
+        return self.n_mels, self.sr * self.min_sec / self.hop_length
+
 
     @property
     def n_a(self):
@@ -84,7 +91,7 @@ class DataLoader:
 
     def _build(self):
         self.data_a, self.data_b = read_list(data_dir=self.data_dir, n_max=self.n_max, min_sec=self.min_sec)
-
+        self._mel_filter = self.mel_filter
         self._validate_build()
 
         logging.info('Build Done')
@@ -136,6 +143,7 @@ class DataLoader:
             yield _y
 
     def _inject_noise(self, y):
+        raise NotImplementedError
         if self.noise_factor == 0:
             noise_factor = 0.01 * np.random.random_sample(1)
         else:
@@ -149,7 +157,17 @@ class DataLoader:
             y = self._inject_noise(y)
         y = self._norm(y)
         y = self._stft(y)
-        y = np.abs(y)
+        y = np.abs(y) ** self.power
+        y = np.dot(self.mel_filter, y)
+        y = np.log(y)
+        return y
+
+    def post_audio(self, y):
+        y = np.array(y)
+        y = np.exp(y)
+        y = librosa.feature.inverse.mel_to_stft(y, sr=self.sr, n_fft=self.n_fft, power=self.power)
+        y = librosa.griffinlim(y, hop_length=self.hop_length,
+                               win_length=self.win_length)
         return y
 
     def load_infer_data(self, audio_file: PosixPath):
@@ -158,6 +176,7 @@ class DataLoader:
         :param audio_file: (PosixPath) 대상 파일 경로
         :return: Generator inputs
         """
+        raise NotImplementedError
         logging.debug(audio_file)
 
         _y, _sr = librosa.load(audio_file, sr=self.sr)
@@ -172,11 +191,28 @@ class DataLoader:
         return librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length, window=self.config['window'],
                             win_length=self.win_length)
 
+    @property
+    def mel_filter(self):
+        if self._mel_filter is None:
+            self._mel_filter = librosa.filters.mel(sr=self.sr, n_fft=self.n_fft, n_mels=self.n_mels, fmax=self.fmax)
+            return self._mel_filter
+        else:
+            return self._mel_filter
+
     def _trunc_audio(self, y):
         audio_len = y.shape[0]
         trunc_len = self.sr * self.min_sec
         trunc_point = random.randint(trunc_len, audio_len) - 1
         _y = y[trunc_point - (trunc_len - 1):trunc_point]
+
+        _cut_point = random.randint(0, trunc_len - 1)
+
+        if self.cut_audio:
+            if _cut_point > trunc_len // 2:
+                _y[_cut_point:] = 0
+            else:
+                _y[:_cut_point] = 0
+
         return _y
 
     def _pad_audio(self, y):
@@ -190,19 +226,24 @@ class DataLoader:
         raise NotImplementedError
         return librosa.power_to_db(s, ref=np.max)
 
-    def specshow(self, y, mel=False, return_figure=False):
+    def specshow(self, y, return_figure=False, x_axis='time', y_axis=None):
         """plot spectrogram
 
         :param y:
         :return: axis
         """
+        if y_axis is None:
+            y_axis = self.y_axis
+
         fig = plt.figure()
         y = librosa.amplitude_to_db(y, ref=np.max)
         axes = librosa.display.specshow(y, hop_length=self.config['hop_length'],
-                                        fmax=8000,
+                                        fmax=self.fmax,
                                         sr=self.sr,
-                                        y_axis='linear',
-                                        x_axis='time')
+                                        y_axis=y_axis,
+                                        x_axis=x_axis,
+                                        cmap='magma')
+
         plt.title('Magnitude spectrogram')
 
         plt.colorbar(format='%+2.0f dB')
@@ -216,6 +257,6 @@ class DataLoader:
         if path:
             y, sr = librosa.load(path, sr=self.sr)
         else:
-            y, sr = librosa.load(random.choice(self.data_b + self.data_a)['filename'], sr=self.sr)
+            y, sr = librosa.load(random.choice(self.data_b + self.data_a), sr=self.sr)
 
         return y, sr

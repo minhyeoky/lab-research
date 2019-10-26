@@ -1,0 +1,22 @@
+{
+  "hop_length": 500,
+  "n_fft": 2048,
+  "window": "hann",
+  "win_length": 2048,
+  "power": 1.0,
+  "n_mels": 256,
+  "min_sec": 4,
+  "batch_size": 1,
+  "n_max": 5000,
+  "fmax": 8000,
+  "epochs": 200,
+  "learning_rate": 0.0002,
+  "kernel_size": 4,
+  "weight_cycle": 2.0,
+  "n_shortcut": 1,
+  "sr": 16000,
+  "augmentation": false,
+  "noise_factor": 0,
+  "cut_audio": false,
+  "y_axis": "log"
+}
